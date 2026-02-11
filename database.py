@@ -1,0 +1,390 @@
+"""
+SQLite 数据库模块
+用于 LogicMaster 应用的题目存储和用户日志记录
+"""
+
+import sqlite3
+import json
+import os
+import time
+
+
+DB_PATH = "logicmaster.db"
+MAX_RETRY_ATTEMPTS = 3
+RETRY_DELAY = 0.5  # 秒
+
+
+def init_db():
+    """
+    初始化数据库，创建 questions 和 user_logs 两个表
+    
+    Returns:
+        bool: 成功返回 True，失败返回 False
+    """
+    for attempt in range(MAX_RETRY_ATTEMPTS):
+        try:
+            # 检查数据库文件是否存在，如果不存在则创建
+            db_exists = os.path.exists(DB_PATH)
+            
+            # 设置超时，避免数据库锁定问题
+            conn = sqlite3.connect(DB_PATH, timeout=10.0)
+            cursor = conn.cursor()
+            
+            # 创建 questions 表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS questions (
+                    id TEXT PRIMARY KEY,
+                    question_type TEXT NOT NULL,
+                    difficulty TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    elo_difficulty REAL DEFAULT 1500.0,
+                    is_verified INTEGER DEFAULT 0
+                )
+            """)
+            
+            # 创建 user_logs 表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT,
+                    action_type TEXT NOT NULL,
+                    question_id TEXT,
+                    details TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            conn.commit()
+            conn.close()
+            
+            if not db_exists:
+                print(f"数据库文件已创建：{DB_PATH}")
+            print(f"数据库初始化成功：{DB_PATH}")
+            return True
+            
+        except sqlite3.OperationalError as e:
+            error_msg = str(e)
+            if "database is locked" in error_msg.lower():
+                if attempt < MAX_RETRY_ATTEMPTS - 1:
+                    print(f"数据库被锁定，等待 {RETRY_DELAY} 秒后重试... (尝试 {attempt + 1}/{MAX_RETRY_ATTEMPTS})")
+                    time.sleep(RETRY_DELAY * (attempt + 1))  # 指数退避
+                    continue
+                else:
+                    print(f"数据库初始化失败：数据库被锁定，已达到最大重试次数")
+                    return False
+            elif "database disk image is malformed" in error_msg.lower():
+                print(f"数据库初始化失败：数据库文件损坏，请检查 {DB_PATH}")
+                return False
+            else:
+                print(f"数据库初始化失败（操作错误）：{e}")
+                return False
+        except sqlite3.DatabaseError as e:
+            print(f"数据库初始化失败（数据库错误）：{e}")
+            return False
+        except PermissionError as e:
+            print(f"数据库初始化失败（权限错误）：无法访问 {DB_PATH}，请检查文件权限")
+            return False
+        except Exception as e:
+            print(f"数据库初始化失败（未知错误）：{e}")
+            return False
+    
+    return False
+
+
+def add_question_to_db(q_data: dict):
+    """
+    将题目数据添加到数据库
+    
+    Args:
+        q_data: 题目字典，必须包含：
+            - id: 题目ID（主键）
+            - question_type: 题型
+            - difficulty: 难度
+            - content: 题目内容（字典，会被转为JSON）
+            其他字段可选（elo_difficulty, is_verified）
+    
+    Returns:
+        bool: 成功返回 True，失败或ID重复返回 False
+    """
+    # 检查必需字段
+    if not isinstance(q_data, dict):
+        print("错误：题目数据必须是字典类型")
+        return False
+    
+    if "id" not in q_data:
+        print("错误：题目数据缺少 'id' 字段")
+        return False
+    
+    for attempt in range(MAX_RETRY_ATTEMPTS):
+        conn = None
+        try:
+            # 检查数据库文件是否存在
+            if not os.path.exists(DB_PATH):
+                print(f"警告：数据库文件 {DB_PATH} 不存在，尝试初始化...")
+                if not init_db():
+                    print(f"错误：无法初始化数据库 {DB_PATH}")
+                    return False
+            
+            question_id = q_data["id"]
+            question_type = q_data.get("question_type", "Weaken")
+            difficulty = q_data.get("difficulty", "medium")
+            
+            # 将 content 转为 JSON 字符串
+            # 如果 q_data 中已经有 content 字段，直接使用；否则将整个 q_data 作为 content
+            if "content" in q_data:
+                content_json = json.dumps(q_data["content"], ensure_ascii=False)
+            else:
+                # 如果没有 content 字段，将除了 id, question_type, difficulty, elo_difficulty, is_verified 之外的字段作为 content
+                content_dict = {k: v for k, v in q_data.items() 
+                              if k not in ["id", "question_type", "difficulty", "elo_difficulty", "is_verified"]}
+                content_json = json.dumps(content_dict, ensure_ascii=False)
+            
+            elo_difficulty = q_data.get("elo_difficulty", 1500.0)
+            is_verified = q_data.get("is_verified", False)
+            
+            # 设置超时，避免数据库锁定问题
+            conn = sqlite3.connect(DB_PATH, timeout=10.0)
+            cursor = conn.cursor()
+            
+            # 检查 ID 是否已存在
+            cursor.execute("SELECT id FROM questions WHERE id = ?", (question_id,))
+            if cursor.fetchone():
+                print(f"题目 ID {question_id} 已存在，跳过插入")
+                conn.close()
+                return False
+            
+            # 插入新题目
+            cursor.execute("""
+                INSERT INTO questions (id, question_type, difficulty, content, elo_difficulty, is_verified)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (question_id, question_type, difficulty, content_json, elo_difficulty, 1 if is_verified else 0))
+            
+            conn.commit()
+            conn.close()
+            print(f"题目 {question_id} 已添加到数据库")
+            return True
+            
+        except sqlite3.IntegrityError:
+            print(f"题目 ID {q_data.get('id', 'unknown')} 已存在，跳过插入")
+            if conn:
+                conn.close()
+            return False
+        except sqlite3.OperationalError as e:
+            error_msg = str(e)
+            if conn:
+                conn.close()
+            
+            if "database is locked" in error_msg.lower():
+                if attempt < MAX_RETRY_ATTEMPTS - 1:
+                    print(f"数据库被锁定，等待 {RETRY_DELAY * (attempt + 1)} 秒后重试... (尝试 {attempt + 1}/{MAX_RETRY_ATTEMPTS})")
+                    time.sleep(RETRY_DELAY * (attempt + 1))  # 指数退避
+                    continue
+                else:
+                    print(f"添加题目失败：数据库被锁定，已达到最大重试次数")
+                    return False
+            elif "database disk image is malformed" in error_msg.lower():
+                print(f"添加题目失败：数据库文件损坏")
+                return False
+            else:
+                print(f"添加题目失败（操作错误）：{e}")
+                return False
+        except sqlite3.DatabaseError as e:
+            if conn:
+                conn.close()
+            print(f"添加题目失败（数据库错误）：{e}")
+            return False
+        except PermissionError as e:
+            if conn:
+                conn.close()
+            print(f"添加题目失败（权限错误）：无法访问 {DB_PATH}")
+            return False
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"添加题目到数据库失败（未知错误）：{e}")
+            return False
+    
+    return False
+
+
+def get_adaptive_candidates(target_difficulty: float, exclude_id: str = None, limit: int = 10) -> list:
+    """
+    根据目标难度（theta）获取自适应候选题目列表（IRT + BKT 驱动）
+    
+    Args:
+        target_difficulty: 目标能力值（theta，通常在 -3.0 到 3.0 之间）
+        exclude_id: 要排除的题目 ID（避免重复推荐，默认 None）
+        limit: 返回的最大候选题目数量（默认 10）
+    
+    Returns:
+        题目字典列表，每个字典包含所有字段，content 字段已从 JSON 解析回字典
+        特别注意：包含 skills 字段（BKT 需要）
+        如果未找到题目，返回空列表 []
+    """
+    # 参数验证
+    if not isinstance(target_difficulty, (int, float)):
+        print(f"错误：target_difficulty 必须是数字，收到：{type(target_difficulty)}")
+        return []
+    
+    if limit <= 0:
+        print(f"错误：limit 必须大于 0，收到：{limit}")
+        return []
+    
+    # 检查数据库文件是否存在
+    if not os.path.exists(DB_PATH):
+        print(f"警告：数据库文件 {DB_PATH} 不存在")
+        return []
+    
+    for attempt in range(MAX_RETRY_ATTEMPTS):
+        conn = None
+        try:
+            # 映射 Elo：target_elo = 1500 + target_difficulty * 100
+            target_elo = 1500.0 + target_difficulty * 100.0
+            
+            # SQL 筛选：elo_difficulty 在 target_elo ± 200 之间
+            elo_min = target_elo - 200.0
+            elo_max = target_elo + 200.0
+            
+            # 设置超时，避免数据库锁定问题
+            conn = sqlite3.connect(DB_PATH, timeout=10.0)
+            cursor = conn.cursor()
+            
+            # 构建查询条件
+            query_params = [elo_min, elo_max]
+            exclude_condition = ""
+            if exclude_id:
+                exclude_condition = "AND id != ?"
+                query_params.append(exclude_id)
+            
+            # 查询 ELO 范围内的题目，排除 is_verified=0 的题目和 exclude_id
+            query = f"""
+                SELECT id, question_type, difficulty, content, elo_difficulty, is_verified
+                FROM questions
+                WHERE elo_difficulty >= ? 
+                  AND elo_difficulty <= ?
+                  AND is_verified != 0
+                  {exclude_condition}
+                ORDER BY RANDOM()
+                LIMIT ?
+            """
+            query_params.append(limit)
+            
+            cursor.execute(query, tuple(query_params))
+            rows = cursor.fetchall()
+            conn.close()
+            conn = None  # 标记已关闭
+            
+            # 兜底：若题目不足，放宽范围重试
+            if len(rows) < limit:
+                # 放宽范围到 ±400
+                elo_min_fallback = target_elo - 400.0
+                elo_max_fallback = target_elo + 400.0
+                
+                conn = sqlite3.connect(DB_PATH, timeout=10.0)
+                cursor = conn.cursor()
+                
+                query_params_fallback = [elo_min_fallback, elo_max_fallback]
+                if exclude_id:
+                    exclude_condition = "AND id != ?"
+                    query_params_fallback.append(exclude_id)
+                else:
+                    exclude_condition = ""
+                
+                query_fallback = f"""
+                    SELECT id, question_type, difficulty, content, elo_difficulty, is_verified
+                    FROM questions
+                    WHERE elo_difficulty >= ? 
+                      AND elo_difficulty <= ?
+                      AND is_verified != 0
+                      {exclude_condition}
+                    ORDER BY RANDOM()
+                    LIMIT ?
+                """
+                query_params_fallback.append(limit)
+                
+                cursor.execute(query_fallback, tuple(query_params_fallback))
+                rows = cursor.fetchall()
+                conn.close()
+                conn = None  # 标记已关闭
+            
+            if not rows:
+                # 第一次查询没有结果时，直接返回空列表，不再重试
+                return []
+            
+            # 解析所有候选题目
+            candidates = []
+            for row in rows:
+                question_id, question_type, difficulty_val, content_json, elo_difficulty, is_verified = row
+                
+                try:
+                    # 将 content JSON 字符串解析回字典
+                    content_dict = json.loads(content_json)
+                    
+                    # 构建题目字典（确保包含所有字段，特别是 skills）
+                    question_dict = {
+                        "id": question_id,
+                        "question_type": question_type,
+                        "difficulty": difficulty_val,
+                        "elo_difficulty": elo_difficulty,
+                        "is_verified": bool(is_verified),
+                        **content_dict  # 将 content 中的字段展开到顶层（包含 skills、diagnoses 等）
+                    }
+                    
+                    candidates.append(question_dict)
+                    
+                except json.JSONDecodeError as e:
+                    print(f"解析题目 {question_id} 的 content JSON 失败：{e}")
+                    continue
+                except Exception as e:
+                    print(f"处理题目 {question_id} 时出错：{e}")
+                    continue
+            
+            if candidates:
+                print(f"找到 {len(candidates)} 道候选题目（ELO: {elo_min:.1f}-{elo_max:.1f}，排除ID: {exclude_id if exclude_id else '无'}）")
+            return candidates
+            
+        except sqlite3.OperationalError as e:
+            error_msg = str(e)
+            if conn:
+                conn.close()
+                conn = None
+            
+            if "database is locked" in error_msg.lower():
+                if attempt < MAX_RETRY_ATTEMPTS - 1:
+                    print(f"数据库被锁定，等待 {RETRY_DELAY * (attempt + 1)} 秒后重试... (尝试 {attempt + 1}/{MAX_RETRY_ATTEMPTS})")
+                    time.sleep(RETRY_DELAY * (attempt + 1))  # 指数退避
+                    continue
+                else:
+                    print(f"从数据库获取候选题目失败：数据库被锁定，已达到最大重试次数")
+                    return []
+            elif "no such table" in error_msg.lower():
+                print(f"从数据库获取候选题目失败：表不存在，请先运行 `python database.py` 初始化数据库")
+                return []
+            elif "database disk image is malformed" in error_msg.lower():
+                print(f"从数据库获取候选题目失败：数据库文件损坏")
+                return []
+            else:
+                print(f"从数据库获取候选题目失败（操作错误）：{e}")
+                return []
+        except sqlite3.DatabaseError as e:
+            if conn:
+                conn.close()
+            print(f"从数据库获取候选题目失败（数据库错误）：{e}")
+            return []
+        except PermissionError as e:
+            if conn:
+                conn.close()
+            print(f"从数据库获取候选题目失败（权限错误）：无法访问 {DB_PATH}")
+            return []
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"从数据库获取自适应候选题目失败（未知错误）：{e}")
+            return []
+    
+    return []
+
+
+if __name__ == "__main__":
+    # 运行数据库初始化
+    init_db()
