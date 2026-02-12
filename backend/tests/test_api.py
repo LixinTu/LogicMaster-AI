@@ -11,11 +11,70 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+import json
+import sqlite3
+
 import pytest
 from fastapi.testclient import TestClient
 from backend.main import app
+from backend.routers.questions import _DB_PATH
 
 client = TestClient(app)
+
+# ---------- Fixture: seed a test question for /api/questions/next ----------
+
+_TEST_Q_ID = "__test_fixture_q001__"
+_TEST_Q_CONTENT = json.dumps({
+    "stimulus": "A company's revenue increased by 20% after launching a new marketing campaign.",
+    "question": "Which of the following, if true, most seriously weakens the conclusion that the marketing campaign caused the revenue increase?",
+    "choices": [
+        "A. The company also reduced prices during the same period",
+        "B. The marketing campaign cost more than previous campaigns",
+        "C. Competitors experienced similar revenue increases without new campaigns",
+        "D. The company's brand recognition improved after the campaign",
+        "E. The campaign targeted a demographic that rarely purchases the product"
+    ],
+    "correct": "C",
+    "skills": ["Causal Reasoning", "Alternative Explanations"],
+    "explanation": "The correct answer is C. The argument assumes the marketing campaign caused the revenue increase, but if competitors saw similar increases without campaigns, there may be an external factor.",
+    "detailed_explanation": "This is a Weaken question testing causal reasoning.",
+    "diagnoses": {},
+    "label_source": "test_fixture",
+    "skills_rationale": "Tests causal reasoning and alternative explanations."
+}, ensure_ascii=False)
+
+
+@pytest.fixture(autouse=False)
+def seed_test_question():
+    """Insert a sample verified question into the test DB, clean up after."""
+    conn = sqlite3.connect(_DB_PATH, timeout=10)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS questions (
+            id TEXT PRIMARY KEY,
+            question_type TEXT NOT NULL,
+            difficulty TEXT NOT NULL,
+            content TEXT NOT NULL,
+            elo_difficulty REAL DEFAULT 1500.0,
+            is_verified INTEGER DEFAULT 0
+        )
+    """)
+    # Remove if leftover from a previous interrupted run
+    cursor.execute("DELETE FROM questions WHERE id = ?", (_TEST_Q_ID,))
+    cursor.execute(
+        "INSERT INTO questions (id, question_type, difficulty, content, elo_difficulty, is_verified) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (_TEST_Q_ID, "Weaken", "medium", _TEST_Q_CONTENT, 1500.0, 1),
+    )
+    conn.commit()
+    conn.close()
+
+    yield
+
+    conn = sqlite3.connect(_DB_PATH, timeout=10)
+    conn.execute("DELETE FROM questions WHERE id = ?", (_TEST_Q_ID,))
+    conn.commit()
+    conn.close()
 
 
 # ========== /health ==========
@@ -101,6 +160,7 @@ class TestThetaUpdate:
 
 # ========== /api/questions/next ==========
 
+@pytest.mark.usefixtures("seed_test_question")
 class TestQuestionsNext:
     def test_returns_question(self):
         resp = client.post("/api/questions/next", json={
