@@ -115,31 +115,29 @@ if "current_q" not in st.session_state:
         # 数据库为空或读取失败，使用默认题目作为 fallback（冷启动）
         # 只在第一次显示警告，避免重复提示
         if not st.session_state.get("_cold_start_warning_shown", False):
-            st.info("ℹ️ **冷启动模式**：系统检测到数据库为空或无可用题目。使用默认题目进行演示。\n\n"
-                   "💡 **提示**：运行 `python generate_pool.py` 生成题目后，系统将自动切换到数据库题目。")
+            st.info("ℹ️ **Cold start mode**: Database is empty or has no questions. Using a default question for demo.\n\n"
+                   "💡 **Tip**: Run `python generate_pool.py` to generate questions; the app will then use the database.")
             st.session_state._cold_start_warning_shown = True
         
-        # 使用默认题目
         initial_q_id = str(uuid.uuid4())[:8]
         st.session_state.current_q = {
             "question_id": initial_q_id,
             "difficulty": "medium",
             "question_type": "Weaken",
-            "stimulus": "某公司计划推出新产品。支持者认为新产品将大幅提升市场份额。然而，竞争对手也在研发类似产品，且市场调研显示消费者对新功能需求有限。",
-            "question": "以下哪项最能削弱支持者的论证？",
+            "stimulus": "A company plans to launch a new product. Supporters believe it will significantly increase market share. However, competitors are developing similar products, and market research shows limited consumer demand for the new features.",
+            "question": "Which of the following most weakens the supporters' argument?",
             "choices": [
-                "A. 新产品开发成本较高",
-                "B. 市场竞争激烈，新产品难以突围",
-                "C. 消费者对新功能不感兴趣",
-                "D. 公司缺乏新产品推广经验",
-                "E. 新产品技术尚未成熟"
+                "A. The new product has high development costs",
+                "B. The market is highly competitive, making it hard for new products to stand out",
+                "C. Consumers have limited interest in the new features",
+                "D. The company lacks experience in promoting new products",
+                "E. The new product's technology is not yet mature"
             ],
             "correct": "C",
             "correct_choice": "C",
-            "explanation": "C 直接指出消费者需求有限，削弱了市场份额提升的假设",
+            "explanation": "C directly points to limited consumer demand, weakening the market-share assumption",
             "tags": [],
-            # 技能标签相关字段（默认值）
-            "skills": ["因果推理", "替代解释"],  # 默认 skills
+            "skills": ["Causal Reasoning", "Alternative Explanation"],
             "label_source": "fallback_rule",  # 初始题目使用规则回退
             "skills_rationale": "Initial question with rule-based default skills.",
             # 预生成的详细解析和诊断（默认题目没有，使用空值）
@@ -221,7 +219,7 @@ col1, col2 = st.columns([0.7, 0.3])
 
 # 左侧聊天区（70%）
 with col1:
-    st.header("💬 逻辑推理对话")
+    st.header("💬 Logical Reasoning")
     
     # 显示当前题目（使用锁题机制：current_q）
     current_q = st.session_state.get("current_q", {})
@@ -241,19 +239,18 @@ with col1:
             skills = []
         
         st.divider()
-        st.subheader("📝 当前题目")
+        st.subheader("📝 Current Question")
         
-        # 在 remediation 阶段显示 question_id（小字）
         phase = st.session_state.get("phase", "answering")
         if phase == "remediation":
-            st.caption(f"题目 ID: {question_id}（已锁定，苏格拉底问答针对本题）")
+            st.caption(f"Question ID: {question_id} (locked — Socratic dialogue applies to this question)")
         
         # 学生可见标签条（题干上方）
         skills_str = ", ".join(skills) if skills else "N/A"
         st.caption(f"**Type:** {question_type} | **Difficulty:** {difficulty} | **Skills:** {skills_str}")
         
-        st.markdown(f"**题干：** {current_q.get('stimulus', '')}")
-        st.markdown(f"**问题：** {current_q.get('question', '')}")
+        st.markdown(f"**Stimulus:** {current_q.get('stimulus', '')}")
+        st.markdown(f"**Question:** {current_q.get('question', '')}")
         
         # 获取当前状态
         attempt = st.session_state.get("attempt", 0)
@@ -266,7 +263,7 @@ with col1:
         # 注意：使用动态 key 以支持重置，只读，不手动赋值
         choice_options = ["A", "B", "C", "D", "E"]
         selected_choice = st.radio(
-            "请选择答案：",
+            "Select your answer:",
             options=choice_options,
             key=f"selected_choice_{st.session_state.radio_key}",
             label_visibility="visible",
@@ -276,7 +273,7 @@ with col1:
         # 显示选项内容（锁定显示，使用 current_q）
         choices = current_q.get("choices", [])
         if choices:
-            st.markdown("**选项内容：**")
+            st.markdown("**Choices:**")
             for choice in choices:
                 st.markdown(f"- {choice}")
         
@@ -289,21 +286,54 @@ with col1:
                 st.error(last_feedback)
         
         # 显示解析（根据规则：第1次答对或第2次答完时显示）
-        # 使用 current_q 中的详细解析（如果已生成）
+        # 优先调用 RAG API 生成增强解析
         if st.session_state.get("show_explanation", False):
-            # 优先使用详细解析（如果存在）
-            detailed_explanation = current_q.get("detailed_explanation", "")
-            if not detailed_explanation:
-                detailed_explanation = current_q.get("explanation", "")
-            
             correct_choice = current_q.get("correct_choice") or current_q.get("correct", "")
+
+            # 尝试从 session_state 获取已缓存的 RAG 结果（避免重复调用）
+            rag_result = st.session_state.get("_rag_explanation_result")
+            if rag_result is None:
+                # 调用 RAG API
+                try:
+                    rag_resp = http_requests.post(
+                        f"{API_BASE_URL}/api/explanations/generate-with-rag",
+                        json={
+                            "question_id": current_q.get("question_id", ""),
+                            "question": current_q,
+                            "user_choice": st.session_state.get("last_user_choice", ""),
+                            "is_correct": "Correct" in st.session_state.get("last_feedback", ""),
+                        },
+                        timeout=30,
+                    )
+                    if rag_resp.ok:
+                        rag_result = rag_resp.json()
+                        st.session_state._rag_explanation_result = rag_result
+                except Exception:
+                    rag_result = None
+
+            # 解析内容：优先 RAG 结果，fallback 到 current_q
+            if rag_result and rag_result.get("explanation"):
+                detailed_explanation = rag_result["explanation"]
+                explanation_source = rag_result.get("source", "unknown")
+                similar_refs = rag_result.get("similar_references", [])
+            else:
+                detailed_explanation = current_q.get("detailed_explanation", "") or current_q.get("explanation", "")
+                explanation_source = "cached"
+                similar_refs = []
+
             if detailed_explanation:
                 st.divider()
-                st.subheader("📖 详细解析")
+                st.subheader("📖 Detailed Explanation")
                 if phase == "finished" and attempt == 2 and last_feedback and "Incorrect" in last_feedback:
-                    # 第2次答错时显示正确选项
-                    st.markdown(f"**正确答案：{correct_choice}**")
+                    st.markdown(f"**Correct Answer: {correct_choice}**")
+                st.caption(f"Source: `{explanation_source}`")
                 st.markdown(detailed_explanation)
+
+                # 显示相似题目参考
+                if similar_refs:
+                    with st.expander("📚 Similar Question References"):
+                        for ref in similar_refs:
+                            st.caption(f"Question {ref['question_id']} (similarity: {ref['similarity']:.0%})")
                 
                 # 显示 Next Question 按钮（只有在 finished 阶段才显示）
                 if phase == "finished":
@@ -371,6 +401,7 @@ with col1:
                                         st.session_state.pending_next_question = False
                                         st.session_state.socratic_context = {}
                                         st.session_state.chat_history = []
+                                        st.session_state._rag_explanation_result = None
                                     else:
                                         result = None  # 数据库中找不到对应题目，走 fallback
                                 except Exception:
@@ -414,16 +445,16 @@ with col1:
                                             st.rerun()
                                         else:
                                             # 数据库为空，显示友好提示并保持当前题目
-                                            st.warning("⚠️ 数据库中暂无题目。请先运行 `python generate_pool.py` 生成题目。")
+                                            st.warning("⚠️ No questions in database. Please run `python generate_pool.py` to generate questions.")
                                     except Exception as e:
                                         # 数据库查询失败，显示错误信息
-                                        st.error(f"❌ 无法从数据库获取题目：{e}。请检查数据库连接或运行 `python generate_pool.py` 生成题目。")
+                                        st.error(f"❌ Failed to load questions from database: {e}. Check database connection or run `python generate_pool.py`.")
                                 else:
                                     # 成功获取新题目，刷新页面
                                     st.rerun()
                             except Exception as e:
                                 # 生成题目时发生未知错误
-                                st.error(f"❌ 生成下一题时出错：{e}。请刷新页面重试。")
+                                st.error(f"❌ Error loading next question: {e}. Please refresh and try again.")
                                 print(f"生成下一题时出错：{e}")
         
         # Submit Answer 按钮
@@ -432,18 +463,18 @@ with col1:
             if st.button("Submit Answer", type="primary", use_container_width=True, disabled=not can_submit):
                 # 再次检查是否允许提交
                 if not can_submit:
-                    st.warning("本题已提交，无法再次提交。")
+                    st.warning("Already submitted. Cannot resubmit.")
                     st.stop()
                 
                 # 判分逻辑（使用锁题机制：current_q）
                 # 注意：只读取 selected_choice，不手动赋值
                 user_choice = st.session_state.get(f"selected_choice_{st.session_state.radio_key}")
                 if not user_choice:
-                    st.warning("请先选择一个选项（A-E）")
+                    st.warning("Please select an option (A-E) first.")
                 else:
                     # 检查 API Key
                     if not api_key:
-                        st.info("请在右侧输入 DeepSeek API Key 以启用 AI 对话。")
+                        st.info("Enter DeepSeek API Key in the sidebar to enable AI dialogue.")
                         st.stop()
                     
                     # 获取当前题目（使用锁题机制）
@@ -451,7 +482,7 @@ with col1:
                     current_q_id = st.session_state.get("current_q_id", "")
                     
                     if not current_q:
-                        st.error("题目数据缺失，请刷新页面。")
+                        st.error("Question data missing. Please refresh the page.")
                         st.stop()
                     
                     # 获取正确答案
@@ -547,7 +578,7 @@ with col1:
                             # 分支A：命中缓存 - 秒回（不调用任何LLM）
                             if cached_diagnosis:
                                 # 直接提取第一句苏格拉底反问
-                                first_msg = cached_diagnosis.get("first_socratic_response", "请重新思考这个选项的问题。")
+                                first_msg = cached_diagnosis.get("first_socratic_response", "Please reconsider this option.")
                                 
                                 # 将 cached_diagnosis（包含 logic_gap 等）存入 socratic_context
                                 st.session_state.socratic_context = {
@@ -560,7 +591,7 @@ with col1:
                                 
                                 # 添加用户选择到聊天历史（首次答错时）
                                 if len(st.session_state.chat_history) == 0:
-                                    user_message = f"我选择的答案是：{user_choice}"
+                                    user_message = f"I chose answer: {user_choice}"
                                     st.session_state.chat_history.append({
                                         "role": "user",
                                         "content": user_message
@@ -576,7 +607,7 @@ with col1:
                             else:
                                 # 添加用户选择到聊天历史（首次答错时）
                                 if len(st.session_state.chat_history) == 0:
-                                    user_message = f"我选择的答案是：{user_choice}"
+                                    user_message = f"I chose answer: {user_choice}"
                                     st.session_state.chat_history.append({
                                         "role": "user",
                                         "content": user_message
@@ -584,7 +615,7 @@ with col1:
                                 
                                 # 显示加载提示并调用实时诊断
                                 try:
-                                    with st.spinner("🤖 AI 正在分析错因..."):
+                                    with st.spinner("🤖 AI is analyzing your answer..."):
                                         diagnosis = diagnose_wrong_answer(
                                             current_q=current_q,
                                             user_choice=user_choice,
@@ -598,9 +629,9 @@ with col1:
                                         if diagnosis.get("hint_plan") and len(diagnosis["hint_plan"]) > 0:
                                             first_socratic_response = diagnosis["hint_plan"][0]
                                         elif diagnosis.get("why_user_choice_wrong"):
-                                            first_socratic_response = f"让我们分析一下：{diagnosis['why_user_choice_wrong']}"
+                                            first_socratic_response = f"Let's analyze: {diagnosis['why_user_choice_wrong']}"
                                         else:
-                                            first_socratic_response = "请重新思考这个选项为什么不对。"
+                                            first_socratic_response = "Please reconsider why this option is wrong."
                                         
                                         # 直接将第一句回复添加到聊天历史（不再调用 tutor_reply）
                                         st.session_state.chat_history.append({
@@ -614,13 +645,13 @@ with col1:
                                         "question_id": current_q_id,
                                         "correct_choice": correct_choice,
                                         "user_choice": user_choice,
-                                        "hint_plan": ["识别结论", "分析假设", "对比选项"]
+                                        "hint_plan": ["Identify the conclusion", "Analyze the assumption gap", "Compare options"]
                                     }
                                     
                                     # 添加默认回复
                                     st.session_state.chat_history.append({
                                         "role": "assistant",
-                                        "content": "请重新思考这个选项的问题。"
+                                        "content": "Please reconsider this option."
                                     })
                     
                     # === 第2次作答（attempt=2）===
@@ -717,15 +748,15 @@ with col1:
                     
                     st.rerun()
         else:
-            st.info("请在右侧输入 DeepSeek API Key 以启用答题功能。")
+            st.info("Enter DeepSeek API Key in the sidebar to enable answering.")
         
         # 显示苏格拉底问答模式提示
         phase = st.session_state.get("phase", "answering")
         if phase == "remediation":
             attempt = st.session_state.get("attempt", 0)
             current_q_id = st.session_state.get("current_q_id", "")
-            st.info(f"⚠️ 你刚才的选择有问题，请回答下面追问。尝试次数：{attempt}/2")
-            st.caption(f"当前题目 ID: {current_q_id}（已锁定）")
+            st.info(f"⚠️ There is an issue with your choice. Please answer the follow-up. Attempts: {attempt}/2")
+            st.caption(f"Question ID: {current_q_id} (locked)")
         
         st.divider()
     
@@ -740,7 +771,7 @@ with col1:
     if phase == "remediation":
         api_key = st.session_state.get("DEEPSEEK_API_KEY", "").strip()
         if api_key:
-            if user_input := st.chat_input("回答追问并重新选择选项..."):
+            if user_input := st.chat_input("Answer the follow-up and reselect your choice..."):
                 # 获取锁定的题目信息
                 current_q = st.session_state.get("current_q", {})
                 current_q_id = st.session_state.get("current_q_id", "")
@@ -754,7 +785,7 @@ with col1:
                 
                 # 调用 Tutor 继续追问（强制对齐当前题）
                 try:
-                    remediation_prompt = f"学生回答：{user_input}。请继续苏格拉底式追问，不能泄露正确选项。"
+                    remediation_prompt = f"Student's answer: {user_input}. Continue with Socratic questioning. Do not reveal the correct answer."
                     
                     tutor_resp = http_requests.post(
                         f"{API_BASE_URL}/api/tutor/chat",
@@ -774,22 +805,22 @@ with col1:
                     tutor_data = tutor_resp.json() if tutor_resp.ok else None
 
                     if tutor_data is None or tutor_data.get("is_error"):
-                        st.error(tutor_data["reply"] if tutor_data else "Tutor API 调用失败")
+                        st.error(tutor_data["reply"] if tutor_data else "Tutor API call failed")
                     else:
                         st.session_state.chat_history.append({
                             "role": "assistant",
                             "content": tutor_data["reply"]
                         })
                 except Exception as e:
-                    st.warning(f"Tutor 追问出错: {e}")
+                    st.warning(f"Tutor follow-up error: {e}")
                 
                 st.rerun()
         else:
-            st.info("请在右侧输入 DeepSeek API Key 以启用对话功能。")
+            st.info("Enter DeepSeek API Key in the sidebar to enable chat.")
 
 # 右侧仪表盘（30%）- IRT + BKT 驱动
 with col2:
-    st.header("📊 评估仪表盘")
+    st.header("📊 Assessment Dashboard")
     
     # Debug: Question Labels (开发用)
     current_q = st.session_state.get("current_q", {})
@@ -817,7 +848,7 @@ with col2:
             if skills_rationale:
                 st.markdown(f"**Skills Rationale:** {skills_rationale}")
             else:
-                st.markdown("**Skills Rationale:** (空)")
+                st.markdown("**Skills Rationale:** (empty)")
             
             # 检查 skills 是否匹配规则池
             try:
@@ -829,7 +860,7 @@ with col2:
                         # 检查所有技能是否都在规则池内
                         all_match = all(skill in rule_pool for skill in skills)
                         if all_match:
-                            st.success("✅ Skills match rule pool")
+                            st.success("✅ Skills match rule pool.")
                         else:
                             mismatched = [s for s in skills if s not in rule_pool]
                             st.error(f"❌ Skills mismatch: {', '.join(mismatched)} not in rule pool")
@@ -893,7 +924,7 @@ with col2:
                 st.warning(f"⚠️ Error calculating stats: {e}")
     else:
         with st.expander("📊 Debug: Label Stats", expanded=False):
-            st.info("No label stats yet.")
+                st.info("No label stats yet. Complete questions to see stats.")
     
     st.divider()
     
@@ -905,16 +936,16 @@ with col2:
         
         # 计算档位
         if current_theta < -1.0:
-            level_bucket = "500档"
+            level_bucket = "500 band"
         elif current_theta <= 1.0:
-            level_bucket = "650档"
+            level_bucket = "650 band"
         else:
-            level_bucket = "750档"
+            level_bucket = "750 band"
         
-        st.metric("GMAT CR 估分", f"V{gmat_score}", delta=f"Theta: {current_theta:.2f}")
-        st.caption(f"当前档位：{level_bucket}")
+        st.metric("GMAT CR Estimate", f"V{gmat_score}", delta=f"Theta: {current_theta:.2f}")
+        st.caption(f"Current band: {level_bucket}")
     except Exception as e:
-        st.metric("GMAT CR 估分", "V30", delta="Theta: 0.00")
+        st.metric("GMAT CR Estimate", "V30", delta="Theta: 0.00")
     
     st.divider()
     
@@ -925,32 +956,32 @@ with col2:
         normalized_progress = (current_theta + 3.0) / 6.0
         normalized_progress = max(0.0, min(1.0, normalized_progress))
         
-        st.subheader("能力进度")
+        st.subheader("Ability Progress")
         st.progress(normalized_progress)
         
         # 标注当前档位
         if current_theta < -1.0:
-            level_label = "500档（基础）"
+            level_label = "500 band (basic)"
         elif current_theta <= 1.0:
-            level_label = "650档（中等）"
+            level_label = "650 band (intermediate)"
         else:
-            level_label = "750档（高阶）"
+            level_label = "750 band (advanced)"
         
-        st.caption(f"当前档位：{level_label} | Theta: {current_theta:.2f}")
+        st.caption(f"Current band: {level_label} | Theta: {current_theta:.2f}")
     except Exception as e:
         st.progress(0.5)
-        st.caption("能力进度计算中...")
+        st.caption("Calculating ability progress...")
     
     st.divider()
     
     # ========== 技能掌握度雷达图 (BKT) ==========
-    st.subheader("技能掌握度雷达图")
+    st.subheader("Skill Mastery Radar")
     
     try:
         questions_log = st.session_state.get("questions_log", [])
         
         if not questions_log:
-            st.info("📝 做题以生成技能画像")
+            st.info("📝 Complete questions to build skill profile")
         else:
             # 统计每个 Skill 的 Correct / Total
             skill_stats = {}  # {skill: {"correct": count, "total": count}}
@@ -992,7 +1023,7 @@ with col2:
                         r=values,
                         theta=categories,
                         fill='toself',
-                        name='技能掌握度',
+                        name='Skill mastery',
                         line_color='rgb(32, 201, 151)'
                     ))
                     
@@ -1008,13 +1039,13 @@ with col2:
                     
                     st.plotly_chart(fig, use_container_width=True)
                 else:
-                    st.info("📝 做题以生成技能画像")
+                    st.info("📝 Complete questions to build skill profile")
             else:
-                st.info("📝 做题以生成技能画像")
+                st.info("📝 Complete questions to build skill profile")
                 
     except Exception as e:
-        st.warning(f"⚠️ 技能雷达图生成失败：{e}")
-        st.info("📝 做题以生成技能画像")
+        st.warning(f"⚠️ Skill radar failed: {e}")
+        st.info("📝 Complete questions to build skill profile")
     
     st.divider()
     
@@ -1024,7 +1055,7 @@ with col2:
         question_count = st.session_state.get("question_count", 0)
         
         if len(theta_history) > 0 and question_count > 0:
-            st.subheader("能力变化曲线 (Theta)")
+            st.subheader("Ability Curve (Theta)")
             
             # 创建折线图数据
             x_data = list(range(len(theta_history)))
@@ -1042,7 +1073,7 @@ with col2:
             ))
             
             fig_theta.update_layout(
-                xaxis_title="题目序号",
+                xaxis_title="Question #",
                 yaxis_title="Theta",
                 height=300,
                 showlegend=True,

@@ -27,6 +27,7 @@ from backend.config import settings
 from backend.routers.theta import router as theta_router
 from backend.routers.questions import router as questions_router
 from backend.routers.tutor import router as tutor_router
+from backend.routers.explanations import router as explanations_router
 
 app = FastAPI(
     title="LogicMaster AI API",
@@ -49,6 +50,7 @@ app.add_middleware(
 app.include_router(theta_router)
 app.include_router(questions_router)
 app.include_router(tutor_router)
+app.include_router(explanations_router)
 
 
 # ---------- Health Check ----------
