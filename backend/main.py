@@ -4,6 +4,7 @@ FastAPI 应用入口
 
 import sys
 import os
+import sqlite3
 
 # Windows 环境下确保 stdout/stderr 使用 UTF-8，避免 engine/ 中的 emoji print 导致 GBK 编码错误
 if sys.platform == "win32":
@@ -59,7 +60,34 @@ app.include_router(analytics_router)
 
 @app.get("/health")
 def health_check():
+    # SQLite 探针
+    db_status = "disconnected"
+    try:
+        db_path = os.path.join(PROJECT_ROOT, "logicmaster.db")
+        conn = sqlite3.connect(db_path, timeout=2)
+        conn.execute("SELECT 1")
+        conn.close()
+        db_status = "connected"
+    except Exception:
+        pass
+
+    # Qdrant 探针（lazy import，避免硬依赖）
+    qdrant_status = "disconnected"
+    try:
+        from qdrant_client import QdrantClient
+        qc = QdrantClient(
+            host=settings.QDRANT_HOST,
+            port=settings.QDRANT_PORT,
+            timeout=2,
+        )
+        qc.get_collections()
+        qdrant_status = "connected"
+    except Exception:
+        pass
+
     return {
         "status": "ok",
         "env": settings.APP_ENV,
+        "db_status": db_status,
+        "qdrant_status": qdrant_status,
     }

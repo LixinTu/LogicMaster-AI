@@ -30,6 +30,21 @@ class TestHealth:
         assert data["status"] == "ok"
         assert "env" in data
 
+    def test_health_includes_db_status(self):
+        data = client.get("/health").json()
+        assert "db_status" in data
+        assert data["db_status"] in ("connected", "disconnected")
+
+    def test_health_includes_qdrant_status(self):
+        data = client.get("/health").json()
+        assert "qdrant_status" in data
+        assert data["qdrant_status"] in ("connected", "disconnected")
+
+    def test_health_backward_compat(self):
+        data = client.get("/health").json()
+        assert data["status"] == "ok"
+        assert "env" in data
+
 
 # ========== /api/theta/update ==========
 
