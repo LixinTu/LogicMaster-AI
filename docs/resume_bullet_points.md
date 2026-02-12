@@ -18,7 +18,9 @@
 
 - Performed statistical analysis of experiment results using two-sample t-tests (scipy), computing p-values, Cohen's d effect size, and per-variant accuracy/theta-gain metrics for data-driven strategy selection
 
-- Calibrated 3-Parameter Logistic IRT model for adaptive difficulty estimation, mapping latent ability (theta) to GMAT Verbal scale (V20-V51) with Bayesian Knowledge Tracing across 10+ cognitive skills
+- Implemented full 3-Parameter Logistic IRT model (discrimination *a*, difficulty *b*, guessing *c*) with item information function I(θ) = a²(P-c)²(1-P)/((1-c)²P) and Maximum Likelihood parameter calibration (L-BFGS-B); maps latent ability to GMAT Verbal scale (V20-V51)
+
+- Built Thompson Sampling bandit for adaptive question selection, maintaining per-question Beta(α, β) priors updated after each student response; combined score balances 3PL item information (exploit) with Beta-sampled uncertainty (explore), with configurable explore weight for A/B comparison against legacy weighted-sort baseline
 
 - Designed retrieval evaluation framework computing Precision@K, Recall@K, MRR, and F1@K metrics for the RAG system; automated quality assessment using LLM-as-judge with structured scoring rubrics
 
@@ -29,8 +31,8 @@
 **Languages**: Python (FastAPI, LangChain, SQLAlchemy, Pandas, NumPy, SciPy)
 **AI/ML**: OpenAI API, LangChain, RAG Systems (Qdrant + Embeddings), Prompt Engineering
 **Databases**: SQLite, Qdrant (Vector DB)
-**Data Science**: Hypothesis Testing (t-tests, Cohen's d), A/B Testing, IRT (3PL), Bayesian Knowledge Tracing
-**Tools**: Docker, Docker Compose, Git, pytest (86 test cases)
+**Data Science**: Hypothesis Testing (t-tests, Cohen's d), A/B Testing, IRT (3PL), Thompson Sampling, Bayesian Knowledge Tracing, MLE Optimization (L-BFGS-B)
+**Tools**: Docker, Docker Compose, Git, pytest (128 test cases)
 **Visualization**: Plotly, Matplotlib, Streamlit
 
 ## Project Link

@@ -5,9 +5,10 @@
 ## Features
 
 ### Adaptive Learning Engine
-- **IRT-based Ability Estimation** — 3-Parameter Logistic model maps latent ability (theta) to GMAT Verbal scale (V20-V51)
+- **3PL IRT Model** — Full Three-Parameter Logistic model (discrimination *a*, difficulty *b*, guessing *c*) with item information function I(θ) and MLE parameter calibration via L-BFGS-B; maps latent ability (theta) to GMAT Verbal scale (V20-V51)
+- **Thompson Sampling Bandit** — Multi-Armed Bandit question selector balancing explore (Beta-distributed uncertainty) and exploit (3PL item information), with configurable explore weight and per-question Beta(α, β) priors updated after each response
 - **BKT Skill Tracking** — Bayesian Knowledge Tracing across 10+ cognitive skills (Causal Reasoning, Assumption Identification, Alternative Explanations, etc.)
-- **Hybrid Recommendation** — IRT ability matching + BKT weakness-first strategy to target specific logical gaps
+- **Hybrid Recommendation Pipeline** — BKT weakness-first filtering → Thompson Sampling final selection; `strategy` parameter supports bandit vs legacy mode for A/B comparison
 
 ### AI-Powered Tutoring
 - **RAG System** — Qdrant vector database + OpenAI `text-embedding-3-small` (1536 dims) for retrieval-augmented explanation generation
@@ -104,8 +105,11 @@ docker-compose up -d
 
 | Metric | Value |
 |---|---|
-| Test cases | 82 passing (4 skipped — empty test DB) |
-| API endpoints | 10 across 5 routers |
+| Test cases | 128 passing |
+| API endpoints | 11 across 5 routers |
+| IRT model | 3PL (discrimination, difficulty, guessing) |
+| Question selection | Thompson Sampling (Beta priors, explore/exploit) |
+| MLE calibration | L-BFGS-B, bounds a∈[0.5,2.5] b∈[-3,3] c∈[0,0.35] |
 | RAG embedding model | `text-embedding-3-small` (1536 dims) |
 | Indexed questions | ~50 |
 | Tutor hint levels | 3 (gentle → moderate → direct) |
@@ -116,10 +120,10 @@ docker-compose up -d
 
 **Backend**: FastAPI, Pydantic v2, LangChain, LangChain-OpenAI
 **AI/ML**: DeepSeek LLM, OpenAI Embeddings, Qdrant vector DB
-**Data Science**: SciPy (t-tests, Cohen's d), IRT 3PL, Bayesian Knowledge Tracing
+**Data Science**: SciPy (t-tests, Cohen's d, L-BFGS-B optimization), IRT 3PL, Thompson Sampling, Bayesian Knowledge Tracing
 **Frontend**: Streamlit (custom CSS, Plotly charts)
 **Database**: SQLite, Qdrant
-**Testing**: pytest (86 test cases)
+**Testing**: pytest (128 test cases)
 **Infrastructure**: Docker, Docker Compose
 
 ## Documentation
@@ -127,6 +131,7 @@ docker-compose up -d
 - [API Reference](docs/api.md) — All endpoints with request/response examples
 - [Resume Bullet Points](docs/resume_bullet_points.md) — Project highlights for job applications
 - [Demo Script](docs/demo_script.md) — 5-minute walkthrough
+- [Academic References](docs/references.md) — Papers behind each component (IRT, BKT, Thompson Sampling, RAG, etc.)
 
 ## Evaluation Scripts
 
@@ -163,10 +168,11 @@ python scripts/index_to_rag.py --force
 │   ├── ml/
 │   │   ├── rag_evaluator.py        # Precision@K, Recall@K, MRR, F1@K
 │   │   └── llm_evaluator.py        # LLM-as-Judge quality scoring
-│   └── tests/                      # 86 pytest test cases
+│   └── tests/                      # 128 pytest test cases
 ├── engine/
-│   ├── scoring.py                  # IRT 3PL scoring
-│   └── recommender.py              # BKT hybrid recommendation
+│   ├── scoring.py                  # IRT 3PL (probability, information, MLE calibration)
+│   ├── bandit_selector.py          # Thompson Sampling question selector
+│   └── recommender.py              # BKT filtering + bandit final selection
 ├── scripts/
 │   ├── index_to_rag.py             # Batch indexer → Qdrant
 │   ├── analyze_ab_tests.py         # A/B statistical analysis
