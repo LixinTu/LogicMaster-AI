@@ -202,6 +202,38 @@ def _render_settings_page():
 # 页面配置
 st.set_page_config(page_title="MathQuest Labs — LogicMaster", layout="wide")
 
+# ========== Week 5 Part 2: Question card CSS ==========
+_QTYPE_COLORS = {
+    "Weaken": "#e74c3c",
+    "Strengthen": "#27ae60",
+    "Assumption": "#3498db",
+    "Evaluate": "#f39c12",
+    "Inference": "#9b59b6",
+    "BoldFace": "#1abc9c",
+}
+_DIFFICULTY_COLORS = {
+    "easy": "#27ae60",
+    "medium": "#f39c12",
+    "hard": "#e74c3c",
+}
+
+def _badge_html(text, color):
+    return (f'<span style="display:inline-block;padding:2px 10px;border-radius:12px;'
+            f'background:{color};color:#fff;font-size:0.8em;margin-right:6px;">{text}</span>')
+
+st.markdown("""<style>
+.question-card {
+    border-radius: 8px;
+    padding: 16px 16px 16px 20px;
+    background: #f8f9fa;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.10);
+    margin-bottom: 12px;
+    line-height: 1.6;
+}
+.question-card p { margin: 0 0 10px 0; }
+.question-card p:last-child { margin-bottom: 0; }
+</style>""", unsafe_allow_html=True)
+
 # ========== Week 5: 新侧边栏 ==========
 with st.sidebar:
     # 1. Navigation radio
@@ -489,18 +521,30 @@ if page == "Practice":
                 skills = []
 
             st.divider()
-            st.subheader("Current Question")
+
+            # Badge row (colored by question type / difficulty / skills)
+            _border_color = _QTYPE_COLORS.get(question_type, "#95a5a6")
+            _diff_color = _DIFFICULTY_COLORS.get(difficulty, "#95a5a6")
+            _badges = _badge_html(question_type, _border_color)
+            _badges += _badge_html(difficulty, _diff_color)
+            for _sk in skills:
+                _badges += _badge_html(_sk, "#6c757d")
+            st.markdown(f'<div style="margin-bottom:8px;">{_badges}</div>', unsafe_allow_html=True)
 
             phase = st.session_state.get("phase", "answering")
             if phase == "remediation":
                 st.caption(f"Question ID: {question_id} (locked — Socratic dialogue applies to this question)")
 
-            # 学生可见标签条（题干上方）
-            skills_str = ", ".join(skills) if skills else "N/A"
-            st.caption(f"**Type:** {question_type} | **Difficulty:** {difficulty} | **Skills:** {skills_str}")
-
-            st.markdown(f"**Stimulus:** {current_q.get('stimulus', '')}")
-            st.markdown(f"**Question:** {current_q.get('question', '')}")
+            # Styled question card
+            _stim = current_q.get('stimulus', '').replace('<', '&lt;').replace('>', '&gt;')
+            _qtext = current_q.get('question', '').replace('<', '&lt;').replace('>', '&gt;')
+            _card_html = (
+                f'<div class="question-card" style="border-left:4px solid {_border_color};">'
+                f'<p><strong>Stimulus:</strong> {_stim}</p>'
+                f'<p style="font-weight:600;">{_qtext}</p>'
+                f'</div>'
+            )
+            st.markdown(_card_html, unsafe_allow_html=True)
 
             # 获取当前状态
             attempt = st.session_state.get("attempt", 0)
@@ -509,23 +553,18 @@ if page == "Practice":
             # 判断是否可以作答：phase为"answering"或"remediation"，且attempt < 2
             can_submit = (phase == "answering" or phase == "remediation") and attempt < 2
 
-            # 显示选项（只显示 A-E 字母）
-            # 注意：使用动态 key 以支持重置，只读，不手动赋值
-            choice_options = ["A", "B", "C", "D", "E"]
+            # Merged radio: choice letter + full text displayed together
+            choices = current_q.get("choices", [])
+            choice_letters = ["A", "B", "C", "D", "E"][:len(choices)]
+            _choice_map = dict(zip(choice_letters, choices))
             selected_choice = st.radio(
                 "Select your answer:",
-                options=choice_options,
+                options=choice_letters,
+                format_func=lambda x: _choice_map.get(x, x),
                 key=f"selected_choice_{st.session_state.radio_key}",
                 label_visibility="visible",
                 disabled=not can_submit
             )
-
-            # 显示选项内容（锁定显示，使用 current_q）
-            choices = current_q.get("choices", [])
-            if choices:
-                st.markdown("**Choices:**")
-                for choice in choices:
-                    st.markdown(f"- {choice}")
 
             # 显示反馈（在 radio 下方）
             last_feedback = st.session_state.get("last_feedback", "")
@@ -545,19 +584,20 @@ if page == "Practice":
                 if rag_result is None:
                     # 调用 RAG API
                     try:
-                        rag_resp = http_requests.post(
-                            f"{API_BASE_URL}/api/explanations/generate-with-rag",
-                            json={
-                                "question_id": current_q.get("question_id", ""),
-                                "question": current_q,
-                                "user_choice": st.session_state.get("last_user_choice", ""),
-                                "is_correct": "Correct" in st.session_state.get("last_feedback", ""),
-                            },
-                            timeout=30,
-                        )
-                        if rag_resp.ok:
-                            rag_result = rag_resp.json()
-                            st.session_state._rag_explanation_result = rag_result
+                        with st.spinner("Generating explanation..."):
+                            rag_resp = http_requests.post(
+                                f"{API_BASE_URL}/api/explanations/generate-with-rag",
+                                json={
+                                    "question_id": current_q.get("question_id", ""),
+                                    "question": current_q,
+                                    "user_choice": st.session_state.get("last_user_choice", ""),
+                                    "is_correct": "Correct" in st.session_state.get("last_feedback", ""),
+                                },
+                                timeout=30,
+                            )
+                            if rag_resp.ok:
+                                rag_result = rag_resp.json()
+                                st.session_state._rag_explanation_result = rag_result
                     except Exception:
                         rag_result = None
 
@@ -590,6 +630,7 @@ if page == "Practice":
                         api_key = st.session_state.get("DEEPSEEK_API_KEY", "").strip()
                         if api_key:
                             if st.button("Next Question", type="primary", use_container_width=True):
+                              with st.spinner("Loading next question..."):
                                 # 调用新的推荐函数（带错误处理和冷启动支持）
                                 try:
                                     user_theta = st.session_state.get("user_theta", 0.0)
@@ -1024,6 +1065,7 @@ if page == "Practice":
                     # Week 3: 调用 /api/tutor/continue（有 conversation_id 时使用 Agent）
                     if conversation_id:
                         try:
+                          with st.spinner("Tutor is thinking..."):
                             cont_resp = http_requests.post(
                                 f"{API_BASE_URL}/api/tutor/continue",
                                 json={
