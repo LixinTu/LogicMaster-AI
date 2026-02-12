@@ -6,3 +6,9 @@ __pycache__/
 .pytest_cache/
 NUL
 .claude/
+node_modules/
+dist/
+build/
+htmlcov/
+*.egg-info/
+=1.7.0
