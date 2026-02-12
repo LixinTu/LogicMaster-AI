@@ -2,7 +2,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from typing import Dict, List, Any, Optional
 import requests as http_requests  # 避免与 FastAPI 的 Request 冲突
-from llm_service import generate_question, diagnose_wrong_answer, generate_detailed_explanation, RULE_SKILL_POOL_BY_TYPE
+from llm_service import generate_question, generate_detailed_explanation, RULE_SKILL_POOL_BY_TYPE
 from utils.db_handler import DatabaseManager, get_db_manager
 from engine.recommender import analyze_weak_skills
 import uuid
@@ -154,6 +154,16 @@ if "current_q_id" not in st.session_state:
 
 if "socratic_context" not in st.session_state:
     st.session_state.socratic_context = {}
+
+# Week 3: LangChain Agent 对话状态
+if "conversation_id" not in st.session_state:
+    st.session_state.conversation_id = None
+
+if "tutor_hint_count" not in st.session_state:
+    st.session_state.tutor_hint_count = 0
+
+if "tutor_understanding" not in st.session_state:
+    st.session_state.tutor_understanding = "confused"
 
 if "show_answer" not in st.session_state:
     st.session_state.show_answer = False
@@ -402,6 +412,10 @@ with col1:
                                         st.session_state.socratic_context = {}
                                         st.session_state.chat_history = []
                                         st.session_state._rag_explanation_result = None
+                                        # Week 3: 清理对话状态
+                                        st.session_state.conversation_id = None
+                                        st.session_state.tutor_hint_count = 0
+                                        st.session_state.tutor_understanding = "confused"
                                     else:
                                         result = None  # 数据库中找不到对应题目，走 fallback
                                 except Exception:
@@ -571,88 +585,50 @@ with col1:
                             st.session_state.last_feedback = "Incorrect ❌"
                             st.session_state.phase = "remediation"
                             st.session_state.show_explanation = False  # 先不显示完整解析
-                            
-                            # 优先查表：尝试从 current_q 获取预存的诊断信息
-                            cached_diagnosis = current_q.get("diagnoses", {}).get(user_choice)
-                            
-                            # 分支A：命中缓存 - 秒回（不调用任何LLM）
-                            if cached_diagnosis:
-                                # 直接提取第一句苏格拉底反问
-                                first_msg = cached_diagnosis.get("first_socratic_response", "Please reconsider this option.")
-                                
-                                # 将 cached_diagnosis（包含 logic_gap 等）存入 socratic_context
+
+                            # Week 3: 调用 /api/tutor/start-remediation（LangChain Agent 诊断 + 首条提示）
+                            try:
+                                with st.spinner("🤖 AI is analyzing your answer..."):
+                                    rem_resp = http_requests.post(
+                                        f"{API_BASE_URL}/api/tutor/start-remediation",
+                                        json={
+                                            "question_id": current_q_id,
+                                            "question": current_q,
+                                            "user_choice": user_choice,
+                                            "correct_choice": correct_choice,
+                                        },
+                                        timeout=30,
+                                    )
+                                    if rem_resp.ok:
+                                        rem_data = rem_resp.json()
+                                        st.session_state.conversation_id = rem_data["conversation_id"]
+                                        st.session_state.tutor_hint_count = rem_data["hint_count"]
+                                        st.session_state.tutor_understanding = rem_data["student_understanding"]
+                                        st.session_state.socratic_context = {
+                                            "logic_gap": rem_data["logic_gap"],
+                                            "error_type": rem_data["error_type"],
+                                        }
+                                        # 同步聊天历史到前端显示
+                                        st.session_state.chat_history = [
+                                            {"role": "user", "content": f"I chose answer: {user_choice}"},
+                                            {"role": "assistant", "content": rem_data["first_hint"]},
+                                        ]
+                                    else:
+                                        raise Exception(f"API returned {rem_resp.status_code}")
+                            except Exception as e:
+                                # 降级：使用默认提示
+                                st.session_state.conversation_id = None
+                                st.session_state.tutor_hint_count = 1
+                                st.session_state.tutor_understanding = "confused"
                                 st.session_state.socratic_context = {
                                     "question_id": current_q_id,
                                     "correct_choice": correct_choice,
                                     "user_choice": user_choice,
-                                    "logic_gap": cached_diagnosis.get("logic_gap", ""),
-                                    "first_socratic_response": first_msg
                                 }
-                                
-                                # 添加用户选择到聊天历史（首次答错时）
-                                if len(st.session_state.chat_history) == 0:
-                                    user_message = f"I chose answer: {user_choice}"
-                                    st.session_state.chat_history.append({
-                                        "role": "user",
-                                        "content": user_message
-                                    })
-                                
-                                # 直接将 first_msg 添加到聊天历史（role: assistant）
-                                st.session_state.chat_history.append({
-                                    "role": "assistant",
-                                    "content": first_msg
-                                })
-                            
-                            # 分支B：未命中缓存 - 降级处理（兼容旧题目）
-                            else:
-                                # 添加用户选择到聊天历史（首次答错时）
-                                if len(st.session_state.chat_history) == 0:
-                                    user_message = f"I chose answer: {user_choice}"
-                                    st.session_state.chat_history.append({
-                                        "role": "user",
-                                        "content": user_message
-                                    })
-                                
-                                # 显示加载提示并调用实时诊断
-                                try:
-                                    with st.spinner("🤖 AI is analyzing your answer..."):
-                                        diagnosis = diagnose_wrong_answer(
-                                            current_q=current_q,
-                                            user_choice=user_choice,
-                                            api_key=api_key
-                                        )
-                                        st.session_state.socratic_context = diagnosis
-                                        
-                                        # 从诊断结果中提取第一句回复
-                                        # diagnose_wrong_answer 返回的格式可能包含 hint_plan，使用第一个作为第一句
-                                        first_socratic_response = ""
-                                        if diagnosis.get("hint_plan") and len(diagnosis["hint_plan"]) > 0:
-                                            first_socratic_response = diagnosis["hint_plan"][0]
-                                        elif diagnosis.get("why_user_choice_wrong"):
-                                            first_socratic_response = f"Let's analyze: {diagnosis['why_user_choice_wrong']}"
-                                        else:
-                                            first_socratic_response = "Please reconsider why this option is wrong."
-                                        
-                                        # 直接将第一句回复添加到聊天历史（不再调用 tutor_reply）
-                                        st.session_state.chat_history.append({
-                                            "role": "assistant",
-                                            "content": first_socratic_response
-                                        })
-                                        
-                                except Exception as e:
-                                    # 如果诊断失败，使用默认上下文和回复
-                                    st.session_state.socratic_context = {
-                                        "question_id": current_q_id,
-                                        "correct_choice": correct_choice,
-                                        "user_choice": user_choice,
-                                        "hint_plan": ["Identify the conclusion", "Analyze the assumption gap", "Compare options"]
-                                    }
-                                    
-                                    # 添加默认回复
-                                    st.session_state.chat_history.append({
-                                        "role": "assistant",
-                                        "content": "Please reconsider this option."
-                                    })
+                                st.session_state.chat_history = [
+                                    {"role": "user", "content": f"I chose answer: {user_choice}"},
+                                    {"role": "assistant", "content": "Let's take a step back. What is the main conclusion of the argument?"},
+                                ]
                     
                     # === 第2次作答（attempt=2）===
                     elif new_attempt == 2:
@@ -743,8 +719,11 @@ with col1:
                         except Exception as e:
                             pass  # 记录失败不影响主流程
                         
-                        # 清空聊天历史
+                        # 清空聊天历史和对话状态
                         st.session_state.chat_history = []
+                        st.session_state.conversation_id = None
+                        st.session_state.tutor_hint_count = 0
+                        st.session_state.tutor_understanding = "confused"
                     
                     st.rerun()
         else:
@@ -757,63 +736,117 @@ with col1:
             current_q_id = st.session_state.get("current_q_id", "")
             st.info(f"⚠️ There is an issue with your choice. Please answer the follow-up. Attempts: {attempt}/2")
             st.caption(f"Question ID: {current_q_id} (locked)")
-        
+
+            # Week 3: 理解度进度条 + 提示计数器
+            hint_count = st.session_state.get("tutor_hint_count", 0)
+            understanding = st.session_state.get("tutor_understanding", "confused")
+            understanding_map = {"confused": 0.15, "partial": 0.55, "clear": 1.0}
+            understanding_label = {"confused": "Confused", "partial": "Partial", "clear": "Clear"}
+            prog_val = understanding_map.get(understanding, 0.15)
+            prog_label = understanding_label.get(understanding, "Confused")
+            col_hint, col_und = st.columns(2)
+            with col_hint:
+                st.metric("Hints Given", f"{hint_count} / 3")
+            with col_und:
+                st.caption(f"Understanding: **{prog_label}**")
+                st.progress(prog_val)
+
         st.divider()
-    
+
     # 显示聊天历史（仅在 remediation 模式下）
     phase = st.session_state.get("phase", "answering")
     if phase == "remediation":
         for message in st.session_state.chat_history:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
-    
+
     # 聊天输入框（仅在 remediation 模式下显示，强制对齐当前题）
     if phase == "remediation":
         api_key = st.session_state.get("DEEPSEEK_API_KEY", "").strip()
         if api_key:
             if user_input := st.chat_input("Answer the follow-up and reselect your choice..."):
-                # 获取锁定的题目信息
                 current_q = st.session_state.get("current_q", {})
                 current_q_id = st.session_state.get("current_q_id", "")
-                socratic_context = st.session_state.get("socratic_context", {})
-                
-                # 添加学生回答到聊天历史
-                st.session_state.chat_history.append({
-                    "role": "user",
-                    "content": user_input
-                })
-                
-                # 调用 Tutor 继续追问（强制对齐当前题）
-                try:
-                    remediation_prompt = f"Student's answer: {user_input}. Continue with Socratic questioning. Do not reveal the correct answer."
-                    
-                    tutor_resp = http_requests.post(
-                        f"{API_BASE_URL}/api/tutor/chat",
-                        json={
-                            "message": remediation_prompt,
-                            "chat_history": [
-                                {"role": m["role"], "content": m["content"]}
-                                for m in st.session_state.chat_history
-                                if m.get("role") in ("user", "assistant")
-                            ],
-                            "question_id": current_q_id,
-                            "current_q": current_q,
-                            "socratic_context": socratic_context,
-                        },
-                        timeout=30,
-                    )
-                    tutor_data = tutor_resp.json() if tutor_resp.ok else None
+                conversation_id = st.session_state.get("conversation_id")
 
-                    if tutor_data is None or tutor_data.get("is_error"):
-                        st.error(tutor_data["reply"] if tutor_data else "Tutor API call failed")
-                    else:
+                # Week 3: 调用 /api/tutor/continue（有 conversation_id 时使用 Agent）
+                if conversation_id:
+                    try:
+                        cont_resp = http_requests.post(
+                            f"{API_BASE_URL}/api/tutor/continue",
+                            json={
+                                "conversation_id": conversation_id,
+                                "student_message": user_input,
+                                "question": current_q,
+                                "correct_choice": current_q.get("correct", ""),
+                            },
+                            timeout=30,
+                        )
+                        if cont_resp.ok:
+                            cont_data = cont_resp.json()
+                            st.session_state.tutor_hint_count = cont_data["hint_count"]
+                            st.session_state.tutor_understanding = cont_data["student_understanding"]
+                            # 同步前端聊天历史
+                            st.session_state.chat_history.append({"role": "user", "content": user_input})
+                            st.session_state.chat_history.append({"role": "assistant", "content": cont_data["reply"]})
+
+                            # 判断是否结束 remediation
+                            if not cont_data["should_continue"]:
+                                st.session_state.phase = "finished"
+                                st.session_state.show_explanation = True
+                        else:
+                            raise Exception(f"API returned {cont_resp.status_code}")
+                    except Exception as e:
+                        # 降级：回退到旧 /api/tutor/chat
+                        st.session_state.chat_history.append({"role": "user", "content": user_input})
+                        try:
+                            fallback_resp = http_requests.post(
+                                f"{API_BASE_URL}/api/tutor/chat",
+                                json={
+                                    "message": user_input,
+                                    "chat_history": st.session_state.chat_history,
+                                    "question_id": current_q_id,
+                                    "current_q": current_q,
+                                    "socratic_context": st.session_state.get("socratic_context", {}),
+                                },
+                                timeout=30,
+                            )
+                            if fallback_resp.ok:
+                                st.session_state.chat_history.append({
+                                    "role": "assistant",
+                                    "content": fallback_resp.json()["reply"],
+                                })
+                        except Exception:
+                            st.session_state.chat_history.append({
+                                "role": "assistant",
+                                "content": "Think about the assumption connecting the premises to the conclusion.",
+                            })
+                else:
+                    # 没有 conversation_id（降级模式），使用旧 /api/tutor/chat
+                    st.session_state.chat_history.append({"role": "user", "content": user_input})
+                    try:
+                        fallback_resp = http_requests.post(
+                            f"{API_BASE_URL}/api/tutor/chat",
+                            json={
+                                "message": user_input,
+                                "chat_history": st.session_state.chat_history,
+                                "question_id": current_q_id,
+                                "current_q": current_q,
+                                "socratic_context": st.session_state.get("socratic_context", {}),
+                            },
+                            timeout=30,
+                        )
+                        if fallback_resp.ok:
+                            st.session_state.chat_history.append({
+                                "role": "assistant",
+                                "content": fallback_resp.json()["reply"],
+                            })
+                    except Exception:
                         st.session_state.chat_history.append({
                             "role": "assistant",
-                            "content": tutor_data["reply"]
+                            "content": "Think about the assumption connecting the premises to the conclusion.",
                         })
-                except Exception as e:
-                    st.warning(f"Tutor follow-up error: {e}")
-                
+
                 st.rerun()
         else:
             st.info("Enter DeepSeek API Key in the sidebar to enable chat.")

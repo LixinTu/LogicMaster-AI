@@ -7,31 +7,31 @@ import json
 from openai import OpenAI
 import uuid
 
-# ========== 规则+LLM混合技能标签系统 ==========
+# ========== Rule + LLM Hybrid Skill Label System ==========
 
-# 规则映射：每种题型的候选技能池
+# Rule mapping: skill pool per question type
 RULE_SKILL_POOL_BY_TYPE = {
-    "Weaken": ["因果推理", "替代解释", "排除干扰项", "假设识别"],
-    "Strengthen": ["因果推理", "证据强度", "结构化表达", "假设识别"],
-    "Assumption": ["假设识别", "因果推理", "结构化表达"],
-    "Inference": ["排除干扰项", "证据强度", "结构化表达"],
-    "Flaw": ["结构化表达", "因果推理", "假设识别", "证据强度"]
+    "Weaken": ["Causal Reasoning", "Alternative Explanation", "Eliminating Distractors", "Assumption Identification"],
+    "Strengthen": ["Causal Reasoning", "Evidence Strength", "Structured Expression", "Assumption Identification"],
+    "Assumption": ["Assumption Identification", "Causal Reasoning", "Structured Expression"],
+    "Inference": ["Eliminating Distractors", "Evidence Strength", "Structured Expression"],
+    "Flaw": ["Structured Expression", "Causal Reasoning", "Assumption Identification", "Evidence Strength"]
 }
 
-# 每种题型的默认 skills（fallback）
+# Default skills per question type (fallback)
 DEFAULT_SKILLS_BY_TYPE = {
-    "Weaken": ["因果推理", "替代解释"],
-    "Strengthen": ["因果推理", "证据强度"],
-    "Assumption": ["假设识别", "因果推理"],
-    "Inference": ["排除干扰项", "证据强度"],
-    "Flaw": ["结构化表达", "假设识别"]
+    "Weaken": ["Causal Reasoning", "Alternative Explanation"],
+    "Strengthen": ["Causal Reasoning", "Evidence Strength"],
+    "Assumption": ["Assumption Identification", "Causal Reasoning"],
+    "Inference": ["Eliminating Distractors", "Evidence Strength"],
+    "Flaw": ["Structured Expression", "Assumption Identification"]
 }
 
 SYSTEM_PROMPT = (
-    "你是一个严厉但有耐心的 GMAT Critical Reasoning 逻辑考官。"
-    "你绝不直接给出标准答案。你只做苏格拉底式追问："
-    "指出论证中的假设、漏洞、因果跳跃、样本偏差等，并用反问推动用户自我修正。"
-    "回复尽量短（1-3 句），每次只追问一个关键点。"
+    "You are a strict but patient GMAT Critical Reasoning examiner. "
+    "You never reveal the correct answer directly. You only use Socratic questioning: "
+    "Point out assumptions, logical gaps, causal leaps, sample bias, etc., and use leading questions "
+    "to guide the student toward self-correction. Keep responses short (1-3 sentences), one key point at a time."
 )
 
 
@@ -56,23 +56,22 @@ def tutor_reply(user_text: str, api_key: str, chat_history=None, current_q: dict
         # 构建增强的 system prompt，强制对齐当前题
         enhanced_system_prompt = SYSTEM_PROMPT
         if current_q and current_q_id:
-            enhanced_system_prompt += f"\n\n【重要约束】\n"
-            enhanced_system_prompt += f"- 你只能讨论题目 ID: {current_q_id}，禁止换题或引用其他题目。\n"
-            enhanced_system_prompt += f"- 每次回复必须先确认当前题：例如「针对本题（ID: {current_q_id}），我们先看...」\n"
-            enhanced_system_prompt += f"- 必须引用题干信息（{current_q.get('stimulus', '')[:50]}...）和选项字母（A-E）。\n"
-            enhanced_system_prompt += f"- 禁止直接给出正确选项字母，只能通过追问引导。\n"
+            enhanced_system_prompt += f"\n\n[IMPORTANT CONSTRAINTS]\n"
+            enhanced_system_prompt += f"- You may only discuss question ID: {current_q_id}. Do not switch topics or reference other questions.\n"
+            enhanced_system_prompt += f"- Each reply must acknowledge the current question, e.g. 'For this question (ID: {current_q_id}), let us consider...'\n"
+            enhanced_system_prompt += f"- You must reference stimulus content ({current_q.get('stimulus', '')[:50]}...) and option letters (A-E).\n"
+            enhanced_system_prompt += f"- Never reveal the correct option letter; only guide through questioning.\n"
             
             if socratic_context and socratic_context.get("hint_plan"):
-                enhanced_system_prompt += f"- 按照以下引导计划逐步推进：{socratic_context.get('hint_plan', [])}\n"
+                enhanced_system_prompt += f"- Follow this hint plan step by step: {socratic_context.get('hint_plan', [])}\n"
 
         messages = [{"role": "system", "content": enhanced_system_prompt}]
         
-        # 如果有当前题目信息，添加到上下文
         if current_q:
-            question_context = f"【当前题目 ID: {current_q_id}】\n"
-            question_context += f"题干：{current_q.get('stimulus', '')}\n"
-            question_context += f"问题：{current_q.get('question', '')}\n"
-            question_context += f"选项：\n"
+            question_context = f"[CURRENT QUESTION ID: {current_q_id}]\n"
+            question_context += f"Stimulus: {current_q.get('stimulus', '')}\n"
+            question_context += f"Question: {current_q.get('question', '')}\n"
+            question_context += f"Choices:\n"
             for choice in current_q.get('choices', []):
                 question_context += f"  {choice}\n"
             messages.append({"role": "system", "content": question_context})
@@ -308,79 +307,77 @@ def generate_question(theta: float, api_key: str) -> dict:
         - explanation: 解释
         如果出错则返回默认题目
     """
-    # 默认题目
     default_question = {
         "difficulty": "medium",
         "question_type": "Weaken",
-        "stimulus": "某公司计划推出新产品。支持者认为新产品将大幅提升市场份额。然而，竞争对手也在研发类似产品，且市场调研显示消费者对新功能需求有限。",
-        "question": "以下哪项最能削弱支持者的论证？",
+        "stimulus": "A company plans to launch a new product. Supporters believe it will significantly increase market share. However, competitors are developing similar products, and market research shows limited consumer demand for the new features.",
+        "question": "Which of the following most weakens the supporters' argument?",
         "choices": [
-            "A. 新产品开发成本较高",
-            "B. 市场竞争激烈，新产品难以突围",
-            "C. 消费者对新功能不感兴趣",
-            "D. 公司缺乏新产品推广经验",
-            "E. 新产品技术尚未成熟"
+            "A. The new product has high development costs",
+            "B. The market is highly competitive, making it hard for new products to stand out",
+            "C. Consumers have limited interest in the new features",
+            "D. The company lacks experience in promoting new products",
+            "E. The new product's technology is not yet mature"
         ],
         "correct": "C",
-        "explanation": "C 直接指出消费者需求有限，削弱了市场份额提升的假设"
+        "explanation": "C directly points to limited consumer demand, weakening the market-share assumption",
+        "skills": ["Causal Reasoning", "Alternative Explanation"],
+        "label_source": "fallback_rule",
+        "skills_rationale": "Default question with rule-based fallback skills."
     }
     
     try:
         client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
         
-        # 根据 theta 确定难度
         if theta < -1.0:
             difficulty = "easy"
-            difficulty_desc = "简单（短文本、单一因果链、选项更直观）"
+            difficulty_desc = "Simple (short text, single causal chain, clear options)"
         elif theta <= 1.0:
             difficulty = "medium"
-            difficulty_desc = "中等（存在替代解释/混杂变量，选项更接近）"
+            difficulty_desc = "Medium (alternative explanations/confounders, closer options)"
         else:
             difficulty = "hard"
-            difficulty_desc = "困难（多因素、多层假设、强干扰项）"
+            difficulty_desc = "Hard (multiple factors, layered assumptions, strong distractors)"
         
-        # 随机选择题型（从所有题型中选择）
         import random
         question_type = random.choice(["Weaken", "Strengthen", "Assumption", "Inference", "Flaw"])
         
-        # 获取该题型的候选技能池
         skill_pool = RULE_SKILL_POOL_BY_TYPE.get(question_type, DEFAULT_SKILLS_BY_TYPE.get("Weaken", []))
-        skill_pool_str = "、".join(skill_pool)
+        skill_pool_str = ", ".join(skill_pool)
         
-        # 构建 prompt（包含技能标签要求）
-        prompt = f"""请生成一道 GMAT Critical Reasoning 中文题目。
+        prompt = f"""Generate one GMAT Critical Reasoning question in English.
 
-要求：
-- 难度：{difficulty} ({difficulty_desc})
-- 题型：{question_type}（从 Weaken/Strengthen/Assumption/Inference/Flaw 中选择）
-- 题干（stimulus）：2-5句，描述一个场景和论证
-- 问题（question）：一句话提问
-- 选项（choices）：5个选项，标记为 A-E
-- 正确答案（correct）：A、B、C、D 或 E 中的一个
-- 解释（explanation）：一句话解释正确选项为什么对（<=30字）
+Requirements:
+- Difficulty: {difficulty} ({difficulty_desc})
+- Question type: {question_type} (from Weaken/Strengthen/Assumption/Inference/Flaw)
+- Stimulus: 2-5 sentences describing a scenario and argument
+- Question: one sentence asking the question
+- Choices: 5 options labeled A-E
+- Correct answer: one of A, B, C, D, or E
+- Explanation: one sentence explaining why the correct option is right (<=50 words)
 
-【技能标签要求（重要）】
-- 题型为 {question_type}，候选技能池：{skill_pool_str}
-- 必须从候选池中选择 2-3 个技能，组成 skills 数组
-- 必须输出 skills_rationale（<=60字），说明为什么这题对应这些技能
+[SKILL LABELS - IMPORTANT]
+- Question type is {question_type}, skill pool: {skill_pool_str}
+- You MUST select 2-3 skills from the pool for the skills array
+- You MUST output skills_rationale (<=80 chars) explaining why this question maps to these skills
 
-请只输出一个严格 JSON 对象，格式如下：
+Output ONLY a strict JSON object in this format:
 {{
   "difficulty": "{difficulty}",
   "question_type": "{question_type}",
-  "stimulus": "<题干背景，2-5句>",
-  "question": "<问题一句话>",
+  "stimulus": "<2-5 sentence stimulus in English>",
+  "question": "<one sentence question in English>",
   "choices": ["A ...", "B ...", "C ...", "D ...", "E ..."],
   "correct": "<A|B|C|D|E>",
-  "explanation": "<一句话解释，<=30字>",
-  "skills": ["<从候选池中选择2-3个技能>"],
-  "skills_rationale": "<说明为什么这题对应这些技能，<=60字>"
+  "explanation": "<one sentence explanation in English>",
+  "skills": ["<2-3 skills from the pool>"],
+  "skills_rationale": "<why this question maps to these skills>"
 }}
 
-只输出 JSON，不要包含任何其他文本。"""
+Output JSON only, no other text."""
         
         messages = [
-            {"role": "system", "content": "你是 GMAT Critical Reasoning 题目生成专家。只输出严格 JSON，不要包含多余文本。"},
+            {"role": "system", "content": "You are a GMAT Critical Reasoning question generation expert. Output strict JSON only, no extra text."},
             {"role": "user", "content": prompt}
         ]
         
@@ -465,50 +462,50 @@ def diagnose_wrong_answer(current_q: dict, user_choice: str, api_key: str) -> di
         "question_id": current_q.get("question_id", ""),
         "correct_choice": current_q.get("correct", ""),
         "user_choice": user_choice,
-        "core_conclusion": "需要从题干中提取",
-        "key_premises": ["前提1", "前提2"],
-        "assumed_link": "关键假设需要识别",
-        "why_user_choice_wrong": "该选项未能有效削弱/加强论证",
+        "core_conclusion": "To be extracted from the stimulus",
+        "key_premises": ["Premise 1", "Premise 2"],
+        "assumed_link": "Key assumption/gap to identify",
+        "why_user_choice_wrong": "This option does not effectively weaken/strengthen the argument",
         "hint_plan": [
-            "第一步：引导学生识别结论",
-            "第二步：分析前提与结论的缺口",
-            "第三步：指出错选选项的问题"
+            "Step 1: Guide student to identify the conclusion",
+            "Step 2: Analyze the gap between premises and conclusion",
+            "Step 3: Point out the flaw in the chosen option"
         ]
     }
     
     try:
         client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
         
-        prompt = f"""你是 GMAT Critical Reasoning 错因诊断专家。分析学生错选的原因，生成苏格拉底引导计划。
+        prompt = f"""You are a GMAT Critical Reasoning diagnostic expert. Analyze why the student chose incorrectly and generate a Socratic guidance plan.
 
-当前题目：
-- 题干：{current_q.get('stimulus', '')}
-- 问题：{current_q.get('question', '')}
-- 选项：
+Current question:
+- Stimulus: {current_q.get('stimulus', '')}
+- Question: {current_q.get('question', '')}
+- Choices:
 {chr(10).join([f"  {choice}" for choice in current_q.get('choices', [])])}
-- 正确答案：{current_q.get('correct', '')}
-- 学生选择：{user_choice}
+- Correct answer: {current_q.get('correct', '')}
+- Student's choice: {user_choice}
 
-请输出严格 JSON，格式如下：
+Output strict JSON in this format (all text in English):
 {{
   "question_id": "{current_q.get('question_id', '')}",
   "correct_choice": "{current_q.get('correct', '')}",
   "user_choice": "{user_choice}",
-  "core_conclusion": "<用一句话总结论证的结论>",
-  "key_premises": ["<前提1>", "<前提2>", "<前提3>"],
-  "assumed_link": "<最关键假设/因果链缺口，1-2句话>",
-  "why_user_choice_wrong": "<为什么学生选择的选项不对，2-3句话，必须引用选项内容>",
+  "core_conclusion": "<one sentence summarizing the argument's conclusion>",
+  "key_premises": ["<premise 1>", "<premise 2>", "<premise 3>"],
+  "assumed_link": "<key assumption/causal gap, 1-2 sentences>",
+  "why_user_choice_wrong": "<why the chosen option is wrong, 2-3 sentences, must reference option content>",
   "hint_plan": [
-    "<第一步引导：识别结论>",
-    "<第二步引导：分析假设缺口>",
-    "<第三步引导：对比选项>"
+    "<Step 1: identify conclusion>",
+    "<Step 2: analyze assumption gap>",
+    "<Step 3: compare options>"
   ]
 }}
 
-只输出 JSON，不要包含任何其他文本。"""
+Output JSON only, no other text."""
         
         messages = [
-            {"role": "system", "content": "你是 GMAT Critical Reasoning 错因诊断专家。只输出严格 JSON，不要包含多余文本。"},
+            {"role": "system", "content": "You are a GMAT Critical Reasoning diagnostic expert. Output strict JSON only, no extra text."},
             {"role": "user", "content": prompt}
         ]
         
@@ -559,37 +556,37 @@ def generate_detailed_explanation(current_q: dict, user_choice: str = None, is_c
     try:
         client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
         
-        prompt = f"""请为以下 GMAT Critical Reasoning 题目生成详细解析（150-250 中文字）。
+        prompt = f"""Generate a detailed explanation (150-250 words in English) for the following GMAT Critical Reasoning question.
 
-题目：
-- 题型：{current_q.get('question_type', 'Weaken')}
-- 题干：{current_q.get('stimulus', '')}
-- 问题：{current_q.get('question', '')}
-- 选项：
+Question:
+- Type: {current_q.get('question_type', 'Weaken')}
+- Stimulus: {current_q.get('stimulus', '')}
+- Question: {current_q.get('question', '')}
+- Choices:
 {chr(10).join([f"  {choice}" for choice in current_q.get('choices', [])])}
-- 正确答案：{current_q.get('correct', '')}
+- Correct answer: {current_q.get('correct', '')}
 """
         
         if user_choice:
-            prompt += f"- 学生选择：{user_choice}（{'正确' if is_correct else '错误'}）\n"
+            prompt += f"- Student's choice: {user_choice} ({'correct' if is_correct else 'incorrect'})\n"
         
         prompt += """
-请按照以下结构生成解析（必须包含全部部分，总计 150-250 字）：
+Generate explanation following this structure (include all parts, 150-250 words total):
 
-1) 正确答案：X
-2) 题型：[Assumption / Weaken / Strengthen / Inference / Flaw]
-3) 论证结构拆解：
-   - 结论是什么（用一句话复述）
-   - 前提有哪些（列2-3条）
-   - 隐含假设/因果链缺口在哪里（1-2句）
-4) 为什么正确选项对（必须引用题干，并解释它如何作用在"缺口"上）
-5) 为什么你选的选项错（如果学生答错，针对其错选解释；如果学生答对，至少提2个干扰项为什么不对）
-6) Takeaway：一句话总结"下次遇到这类题怎么做"
+1) Correct answer: X
+2) Question type: [Assumption / Weaken / Strengthen / Inference / Flaw]
+3) Argument structure:
+   - What is the conclusion (one sentence)
+   - Key premises (list 2-3)
+   - Where is the hidden assumption/causal gap (1-2 sentences)
+4) Why the correct option works (cite stimulus; explain how it addresses the gap)
+5) Why wrong options fail (if student was wrong, explain their choice; if correct, explain at least 2 distractors)
+6) Takeaway: one sentence on how to approach similar questions
 
-只输出解析文本，不要包含标题或编号。"""
+Output explanation text only, no headings or numbering."""
         
         messages = [
-            {"role": "system", "content": "你是 GMAT Critical Reasoning 解析专家。生成详细、清晰、对学生有帮助的解析。"},
+            {"role": "system", "content": "You are a GMAT Critical Reasoning explanation expert. Generate detailed, clear, helpful explanations."},
             {"role": "user", "content": prompt}
         ]
         
@@ -612,35 +609,34 @@ def generate_detailed_explanation(current_q: dict, user_choice: str = None, is_c
 
 
 def _generate_template_explanation(current_q: dict, user_choice: str = None, is_correct: bool = False) -> str:
-    """生成模板解析（当 LLM 调用失败时使用）"""
+    """Generate template explanation when LLM call fails."""
     correct_choice = current_q.get("correct", "")
     question_type = current_q.get("question_type", "Weaken")
     stimulus = current_q.get("stimulus", "")
     choices = current_q.get("choices", [])
     
-    explanation = f"""【正确答案：{correct_choice}】
+    explanation = f"""[Correct Answer: {correct_choice}]
 
-【题型】{question_type}
+[Question Type] {question_type}
 
-【论证结构拆解】
-- 结论：需要从题干中识别核心结论
-- 前提：列出支持结论的关键前提
-- 隐含假设：论证中未明说但必需的假设或因果链缺口
+[Argument Structure]
+- Conclusion: Identify the core conclusion from the stimulus
+- Premises: List key premises supporting the conclusion
+- Hidden assumption: Unstated assumption or causal gap required by the argument
 
-【为什么正确选项对】
-正确选项 {correct_choice} 通过[具体机制]作用在论证的[缺口位置]，从而[削弱/加强/填补]了论证。
+[Why the correct option works]
+Option {correct_choice} addresses the gap via [specific mechanism], thus [weakening/strengthening/filling] the argument.
 
-【为什么其他选项不对】"""
+[Why other options are wrong]"""
     
     if user_choice and not is_correct:
-        explanation += f"\n你选择的选项 {user_choice} [具体说明为什么不对]。"
+        explanation += f"\nYour choice {user_choice} [explain why it is wrong]."
     
-    # 至少提2个干扰项
     wrong_options = [c for c in ["A", "B", "C", "D", "E"] if c != correct_choice][:2]
     for opt in wrong_options:
-        explanation += f"\n选项 {opt} [说明为什么不对]。"
+        explanation += f"\nOption {opt} [explain why wrong]."
     
-    explanation += "\n\n【Takeaway】遇到这类题目时，要[关键方法总结]。"
+    explanation += "\n\n[Takeaway] For similar questions, [key approach summary]."
     
     return explanation
 
@@ -693,51 +689,51 @@ def generate_all_diagnoses(current_q: dict, api_key: str) -> dict:
         wrong_options_str = "\n".join(wrong_options_with_content)
         
         # 构建 prompt
-        prompt = f"""请分析这道 GMAT Critical Reasoning 题目的 4 个错误选项。
+        prompt = f"""Analyze the 4 wrong options for this GMAT Critical Reasoning question.
 
-题目信息：
-- 题型：{current_q.get('question_type', 'Weaken')}
-- 题干：{current_q.get('stimulus', '')}
-- 问题：{current_q.get('question', '')}
-- 正确答案：{correct_choice}
+Question info:
+- Type: {current_q.get('question_type', 'Weaken')}
+- Stimulus: {current_q.get('stimulus', '')}
+- Question: {current_q.get('question', '')}
+- Correct answer: {correct_choice}
 
-错误选项：
+Wrong options:
 {wrong_options_str}
 
-请为每个错误选项提供：
-1. logic_gap（逻辑漏洞）：1-2句话说明这个选项为什么不对，指出其逻辑漏洞
-2. first_socratic_response（第一句苏格拉底反问）：1句话，用反问的方式引导学生思考这个选项的问题，不能直接给答案
+For each wrong option provide:
+1. logic_gap: 1-2 sentences explaining why the option is wrong, the logical flaw
+2. first_socratic_response: 1 sentence Socratic question guiding the student to see the problem (do not reveal the answer)
 
-请输出严格 JSON 对象，格式如下：
+Output strict JSON in this format (all text in English):
 {{
   "A": {{
-    "logic_gap": "<逻辑漏洞描述>",
-    "first_socratic_response": "<第一句苏格拉底反问>"
+    "logic_gap": "<logic gap description>",
+    "first_socratic_response": "<first Socratic question>"
   }},
   "B": {{
-    "logic_gap": "<逻辑漏洞描述>",
-    "first_socratic_response": "<第一句苏格拉底反问>"
+    "logic_gap": "<logic gap description>",
+    "first_socratic_response": "<first Socratic question>"
   }},
   "C": {{
-    "logic_gap": "<逻辑漏洞描述>",
-    "first_socratic_response": "<第一句苏格拉底反问>"
+    "logic_gap": "<logic gap description>",
+    "first_socratic_response": "<first Socratic question>"
   }},
   "D": {{
-    "logic_gap": "<逻辑漏洞描述>",
-    "first_socratic_response": "<第一句苏格拉底反问>"
+    "logic_gap": "<logic gap description>",
+    "first_socratic_response": "<first Socratic question>"
   }},
   "E": {{
-    "logic_gap": "<逻辑漏洞描述>",
-    "first_socratic_response": "<第一句苏格拉底反问>"
+    "logic_gap": "<logic gap description>",
+    "first_socratic_response": "<first Socratic question>"
   }}
 }}
 
-注意：只输出错误选项（排除正确答案 {correct_choice}）的分析。只输出 JSON，不要包含任何其他文本。"""
+Note: Only output analysis for wrong options (exclude correct answer {correct_choice}). Output JSON only, no other text."""
         
         client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
         
         messages = [
-            {"role": "system", "content": "你是 GMAT Critical Reasoning 错因分析专家。只输出严格 JSON，不要包含多余文本。"},
+            {"role": "system", "content": "You are a GMAT Critical Reasoning diagnostic expert. Output strict JSON only, no extra text."},
             {"role": "user", "content": prompt}
         ]
         
@@ -768,8 +764,8 @@ def generate_all_diagnoses(current_q: dict, api_key: str) -> dict:
             if opt in result and isinstance(result[opt], dict):
                 opt_data = result[opt]
                 validated_result[opt] = {
-                    "logic_gap": opt_data.get("logic_gap", "逻辑漏洞需要分析"),
-                    "first_socratic_response": opt_data.get("first_socratic_response", "请重新思考这个选项。")
+                    "logic_gap": opt_data.get("logic_gap", "Logic gap needs analysis."),
+                    "first_socratic_response": opt_data.get("first_socratic_response", "Please reconsider this option.")
                 }
         
         return validated_result

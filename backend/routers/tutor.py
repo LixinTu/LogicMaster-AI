@@ -1,8 +1,12 @@
 """
 Tutor 对话 API
-复用 llm_service.py 的 tutor_reply（苏格拉底式追问）
+- POST /api/tutor/chat               — (Week 1) 向后兼容：无状态 Socratic 对话
+- POST /api/tutor/start-remediation   — (Week 3) 新建对话，诊断 + 首条提示
+- POST /api/tutor/continue            — (Week 3) 继续对话：评估理解 → 下一提示/结论
+- POST /api/tutor/conclude            — (Week 3) 结束对话，返回总结
 """
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -10,11 +14,20 @@ from pydantic import BaseModel, Field
 
 from llm_service import tutor_reply
 from backend.config import settings
+from backend.services.tutor_agent import get_tutor_agent
+from backend.services.conversation_manager import (
+    get_conversation_manager,
+    STATE_HINTING,
+    STATE_CONCLUDED,
+)
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/tutor", tags=["tutor"])
 
 
-# ---------- 请求/响应模型 ----------
+# ====================================================================
+# Week 1 向后兼容模型 + 端点（保持不变）
+# ====================================================================
 
 class ChatMessage(BaseModel):
     role: str = Field(..., description="消息角色: user 或 assistant")
@@ -34,19 +47,13 @@ class TutorChatResponse(BaseModel):
     is_error: bool = Field(False, description="是否为错误响应")
 
 
-# ---------- 端点 ----------
-
 @router.post("/chat", response_model=TutorChatResponse)
 def tutor_chat(req: TutorChatRequest):
-    """
-    Tutor 对话端点。
-    直接调用 llm_service.tutor_reply，传入 DeepSeek API Key。
-    """
+    """Week 1 向后兼容端点：无状态 Socratic 对话"""
     api_key = settings.DEEPSEEK_API_KEY
     if not api_key:
-        raise HTTPException(status_code=500, detail="DEEPSEEK_API_KEY 未配置")
+        raise HTTPException(status_code=500, detail="DEEPSEEK_API_KEY not configured")
 
-    # 将 Pydantic 模型转为 dict 列表（tutor_reply 期望的格式）
     history_dicts = [msg.model_dump() for msg in req.chat_history]
 
     reply = tutor_reply(
@@ -59,7 +66,299 @@ def tutor_chat(req: TutorChatRequest):
     )
 
     is_error = reply.startswith("[LLM ERROR]")
-    if is_error:
-        return TutorChatResponse(reply=reply, is_error=True)
+    return TutorChatResponse(reply=reply, is_error=is_error)
 
-    return TutorChatResponse(reply=reply, is_error=False)
+
+# ====================================================================
+# Week 3 新端点：LangChain Agent + ConversationManager
+# ====================================================================
+
+# ---------- 请求/响应模型 ----------
+
+class StartRemediationRequest(BaseModel):
+    question_id: str = Field(..., description="题目 ID")
+    question: Dict[str, Any] = Field(..., description="完整题目字典")
+    user_choice: str = Field(..., description="学生选择 (A-E)")
+    correct_choice: str = Field(..., description="正确答案 (A-E)")
+
+
+class StartRemediationResponse(BaseModel):
+    conversation_id: str
+    first_hint: str
+    logic_gap: str
+    error_type: str
+    hint_count: int
+    student_understanding: str
+    current_state: str
+
+
+class ContinueRequest(BaseModel):
+    conversation_id: str = Field(..., description="对话 ID")
+    student_message: str = Field(..., description="学生回复")
+    question: Optional[Dict[str, Any]] = Field(None, description="题目字典（用于生成提示）")
+    correct_choice: Optional[str] = Field(None, description="正确答案")
+
+
+class ContinueResponse(BaseModel):
+    reply: str
+    hint_count: int
+    student_understanding: str
+    should_continue: bool
+    current_state: str
+
+
+class ConcludeRequest(BaseModel):
+    conversation_id: str = Field(..., description="对话 ID")
+    question: Optional[Dict[str, Any]] = Field(None, description="题目字典（用于生成结论）")
+    correct_choice: Optional[str] = Field(None, description="正确答案")
+
+
+class ConversationSummary(BaseModel):
+    total_turns: int
+    hint_count: int
+    final_understanding: str
+    time_spent_seconds: float
+
+
+class ConcludeResponse(BaseModel):
+    conclusion: str
+    summary: ConversationSummary
+
+
+# ---------- 端点实现 ----------
+
+@router.post("/start-remediation", response_model=StartRemediationResponse)
+def start_remediation(req: StartRemediationRequest):
+    """
+    新建 remediation 对话：诊断错误 → 生成第一条苏格拉底提示
+    """
+    try:
+        cm = get_conversation_manager()
+        agent = get_tutor_agent()
+
+        # 1. 创建对话
+        conv = cm.create_conversation(question_id=req.question_id)
+        cid = conv.conversation_id
+
+        # 2. 诊断错误
+        diagnosis = agent.diagnose_error(
+            question=req.question,
+            user_choice=req.user_choice,
+            correct_choice=req.correct_choice,
+        )
+        logic_gap = diagnosis.get("logic_gap", "")
+        error_type = diagnosis.get("error_type", "other")
+        key_assumption = diagnosis.get("key_assumption", "")
+
+        # 保存诊断结果到对话状态
+        cm.update_state(
+            cid,
+            state=STATE_HINTING,
+            logic_gap=logic_gap,
+            error_type=error_type,
+        )
+        # 存储 key_assumption 和题目信息供后续使用
+        conv.key_assumption = key_assumption
+        conv.question = req.question
+        conv.correct_choice = req.correct_choice
+        conv.user_choice = req.user_choice
+
+        # 3. 记录学生选择
+        cm.add_message(cid, "user", f"I chose answer: {req.user_choice}")
+
+        # 4. 生成第一条提示 (hint_count=0 → gentle)
+        first_hint = agent.generate_socratic_hint(
+            question=req.question,
+            user_choice=req.user_choice,
+            logic_gap=logic_gap,
+            error_type=error_type,
+            hint_count=0,
+            chat_history=cm.get_context_for_llm(cid),
+        )
+        cm.add_message(cid, "assistant", first_hint)
+        cm.update_state(cid, hint_count=1)
+
+        return StartRemediationResponse(
+            conversation_id=cid,
+            first_hint=first_hint,
+            logic_gap=logic_gap,
+            error_type=error_type,
+            hint_count=1,
+            student_understanding="confused",
+            current_state=STATE_HINTING,
+        )
+
+    except Exception as e:
+        logger.error("start_remediation failed: %s", e)
+        # 优雅降级：仍然创建对话，返回默认提示
+        cm = get_conversation_manager()
+        conv = cm.create_conversation(question_id=req.question_id)
+        cid = conv.conversation_id
+        cm.update_state(cid, state=STATE_HINTING, hint_count=1)
+        cm.add_message(cid, "user", f"I chose answer: {req.user_choice}")
+
+        fallback_hint = "Let's take a step back. What is the main conclusion of the argument?"
+        cm.add_message(cid, "assistant", fallback_hint)
+
+        # 保存最少必要状态
+        conv.question = req.question
+        conv.correct_choice = req.correct_choice
+        conv.user_choice = req.user_choice
+
+        return StartRemediationResponse(
+            conversation_id=cid,
+            first_hint=fallback_hint,
+            logic_gap="Unable to diagnose — using default guidance.",
+            error_type="other",
+            hint_count=1,
+            student_understanding="confused",
+            current_state=STATE_HINTING,
+        )
+
+
+@router.post("/continue", response_model=ContinueResponse)
+def continue_remediation(req: ContinueRequest):
+    """
+    继续对话：评估学生理解 → 决定下一步（继续提示 or 结论）
+    """
+    cm = get_conversation_manager()
+    conv = cm.get_conversation(req.conversation_id)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found or expired")
+
+    agent = get_tutor_agent()
+    cid = req.conversation_id
+
+    # 获取题目上下文（优先用请求中传入的，否则用对话中保存的）
+    question = req.question or getattr(conv, "question", {}) or {}
+    correct_choice = req.correct_choice or getattr(conv, "correct_choice", "")
+
+    try:
+        # 1. 记录学生消息
+        cm.add_message(cid, "user", req.student_message)
+
+        # 2. 评估理解程度
+        eval_result = agent.evaluate_understanding(
+            student_response=req.student_message,
+            logic_gap=conv.logic_gap,
+            key_assumption=getattr(conv, "key_assumption", ""),
+            chat_history=cm.get_context_for_llm(cid),
+        )
+        understanding = eval_result.get("understanding", "confused")
+        cm.update_state(cid, understanding=understanding)
+
+        # 3. 判断是否继续
+        should_continue = cm.should_continue_remediation(cid)
+
+        if should_continue:
+            # 生成下一条提示（强度递增）
+            hint = agent.generate_socratic_hint(
+                question=question,
+                user_choice=getattr(conv, "user_choice", ""),
+                logic_gap=conv.logic_gap,
+                error_type=conv.error_type,
+                hint_count=conv.hint_count,
+                chat_history=cm.get_context_for_llm(cid),
+            )
+            cm.add_message(cid, "assistant", hint)
+            new_hint_count = conv.hint_count + 1
+            cm.update_state(cid, hint_count=new_hint_count)
+
+            return ContinueResponse(
+                reply=hint,
+                hint_count=new_hint_count,
+                student_understanding=understanding,
+                should_continue=True,
+                current_state=STATE_HINTING,
+            )
+        else:
+            # 生成结论（揭示正确答案）
+            conclusion = agent.generate_conclusion(
+                question=question,
+                correct_choice=correct_choice,
+                logic_gap=conv.logic_gap,
+                student_understanding=understanding,
+            )
+            cm.add_message(cid, "assistant", conclusion)
+            cm.update_state(cid, state=STATE_CONCLUDED)
+
+            return ContinueResponse(
+                reply=conclusion,
+                hint_count=conv.hint_count,
+                student_understanding=understanding,
+                should_continue=False,
+                current_state=STATE_CONCLUDED,
+            )
+
+    except Exception as e:
+        logger.error("continue_remediation failed: %s", e)
+        # 降级：返回一条默认提示
+        fallback = "Think about the assumption connecting the premises to the conclusion. Is it valid?"
+        cm.add_message(cid, "assistant", fallback)
+        return ContinueResponse(
+            reply=fallback,
+            hint_count=conv.hint_count,
+            student_understanding=conv.student_understanding,
+            should_continue=cm.should_continue_remediation(cid),
+            current_state=conv.current_state,
+        )
+
+
+@router.post("/conclude", response_model=ConcludeResponse)
+def conclude_remediation(req: ConcludeRequest):
+    """
+    结束对话，生成最终总结
+    """
+    cm = get_conversation_manager()
+    conv = cm.get_conversation(req.conversation_id)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found or expired")
+
+    agent = get_tutor_agent()
+
+    question = req.question or getattr(conv, "question", {}) or {}
+    correct_choice = req.correct_choice or getattr(conv, "correct_choice", "")
+
+    try:
+        # 生成结论
+        conclusion = agent.generate_conclusion(
+            question=question,
+            correct_choice=correct_choice,
+            logic_gap=conv.logic_gap,
+            student_understanding=conv.student_understanding,
+        )
+        cm.add_message(req.conversation_id, "assistant", conclusion)
+
+        # 结束对话并获取摘要
+        summary_dict = cm.conclude(req.conversation_id)
+
+        return ConcludeResponse(
+            conclusion=conclusion,
+            summary=ConversationSummary(
+                total_turns=summary_dict.get("total_turns", 0),
+                hint_count=summary_dict.get("hint_count", 0),
+                final_understanding=summary_dict.get("final_understanding", "confused"),
+                time_spent_seconds=summary_dict.get("time_spent_seconds", 0.0),
+            ),
+        )
+
+    except Exception as e:
+        logger.error("conclude_remediation failed: %s", e)
+        # 降级
+        summary_dict = cm.conclude(req.conversation_id) or {
+            "total_turns": 0, "hint_count": 0,
+            "final_understanding": "confused", "time_spent_seconds": 0.0,
+        }
+        fallback_conclusion = (
+            f"The correct answer is {correct_choice}. "
+            "Review the argument's hidden assumption for similar questions."
+        )
+        return ConcludeResponse(
+            conclusion=fallback_conclusion,
+            summary=ConversationSummary(
+                total_turns=summary_dict.get("total_turns", 0),
+                hint_count=summary_dict.get("hint_count", 0),
+                final_understanding=summary_dict.get("final_understanding", "confused"),
+                time_spent_seconds=summary_dict.get("time_spent_seconds", 0.0),
+            ),
+        )

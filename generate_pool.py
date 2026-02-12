@@ -1,5 +1,5 @@
 """
-批量生成题目并存入数据库的后台脚本
+Batch generate questions and save to database.
 """
 
 import os
@@ -22,11 +22,10 @@ load_dotenv()
 # 从环境变量中读取 API Key
 API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
-# 检查 API Key 是否存在
 if not API_KEY:
-    print("错误：未找到 DEEPSEEK_API_KEY 环境变量")
-    print("请创建 .env 文件并添加：DEEPSEEK_API_KEY=your_api_key_here")
-    raise ValueError("DEEPSEEK_API_KEY 环境变量未设置")
+    print("Error: DEEPSEEK_API_KEY not found in environment")
+    print("Create .env and add: DEEPSEEK_API_KEY=your_api_key_here")
+    raise ValueError("DEEPSEEK_API_KEY not set")
 
 
 def call_with_retry(func: Callable, *args: Any, **kwargs: Any) -> Optional[Any]:
@@ -61,7 +60,7 @@ def call_with_retry(func: Callable, *args: Any, **kwargs: Any) -> Optional[Any]:
             if is_rate_limit and attempt < MAX_RETRY_ATTEMPTS - 1:
                 # 指数退避策略
                 actual_delay = min(retry_delay, MAX_RETRY_DELAY)
-                print(f"  ⚠ API Rate Limit 错误，等待 {actual_delay} 秒后重试... (尝试 {attempt + 1}/{MAX_RETRY_ATTEMPTS})")
+                print(f"  ⚠ API Rate Limit. Waiting {actual_delay}s before retry... (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})")
                 time.sleep(actual_delay)
                 retry_delay *= 2  # 指数退避：每次重试延迟翻倍
                 continue
@@ -80,32 +79,28 @@ def worker(count: int) -> None:
         count: 要生成的题目数量
     """
     if not API_KEY:
-        print("错误：请先设置 API_KEY 变量")
+        print("Error: API_KEY not set")
         return
     
-    # 初始化数据库管理器
     db_manager: DatabaseManager = get_db_manager()
-    
-    # theta 值列表，用于轮换生成不同难度的题目
     theta_values: List[float] = [-2.0, 0.0, 2.0]
-    
     success_count: int = 0
     fail_count: int = 0
     
-    print(f"开始生成 {count} 道题目...")
+    print(f"Generating {count} questions...")
     
     for i in range(count):
         # 轮换 theta 值
         theta = theta_values[i % len(theta_values)]
         
-        print(f"\n[{i+1}/{count}] 使用 theta={theta} 生成题目...")
+        print(f"\n[{i+1}/{count}] Generating with theta={theta}...")
         
         try:
             # 调用 generate_question 生成题目（带重试机制）
             question_data = call_with_retry(generate_question, theta, API_KEY)
             
             if not question_data:
-                print(f"  生成失败：返回了空数据")
+                print(f"  Failed: returned empty data")
                 fail_count += 1
                 time.sleep(1)
                 continue
@@ -114,10 +109,10 @@ def worker(count: int) -> None:
             if "id" not in question_data or not question_data.get("id"):
                 question_id = str(uuid.uuid4())[:8]
                 question_data["id"] = question_id
-                print(f"  生成了新的 question_id: {question_id}")
+                print(f"  Generated question_id: {question_id}")
             
             # 生成详细解析（作为标准解析模板）
-            print(f"  正在生成详细解析...")
+            print(f"  Generating detailed explanation...")
             try:
                 detailed_explanation = call_with_retry(
                     generate_detailed_explanation,
@@ -128,26 +123,26 @@ def worker(count: int) -> None:
                 )
                 if detailed_explanation:
                     question_data["detailed_explanation"] = detailed_explanation
-                    print(f"  ✓ 详细解析已生成")
+                    print(f"  ✓ Detailed explanation generated")
                 else:
-                    print(f"  ⚠ 生成详细解析失败，将使用基础解析")
+                    print(f"  ⚠ Failed to generate detailed explanation, using basic")
                     question_data["detailed_explanation"] = question_data.get("explanation", "")
             except Exception as e:
-                print(f"  ⚠ 生成详细解析失败：{e}，将使用基础解析")
+                print(f"  ⚠ Failed: {e}, using basic explanation")
                 question_data["detailed_explanation"] = question_data.get("explanation", "")
             
             # 生成所有错误选项的诊断（预生成，用于苏格拉底引导）
-            print(f"  正在生成4个干扰项的诊断...")
+            print(f"  Generating diagnoses for 4 distractors...")
             try:
                 all_diagnoses = call_with_retry(generate_all_diagnoses, question_data, API_KEY)
                 if all_diagnoses:
                     question_data["diagnoses"] = all_diagnoses
-                    print(f"  ✓ 4个干扰项的诊断已预生成")
+                    print(f"  ✓ Diagnoses for 4 distractors generated")
                 else:
-                    print(f"  ⚠ 生成诊断失败，将使用空字典")
+                    print(f"  ⚠ Failed to generate diagnoses, using empty dict")
                     question_data["diagnoses"] = {}
             except Exception as e:
-                print(f"  ⚠ 生成诊断失败：{e}，将使用空字典")
+                print(f"  ⚠ Failed: {e}, using empty diagnoses")
                 question_data["diagnoses"] = {}
             
             # 准备存入数据库的数据格式
@@ -167,22 +162,21 @@ def worker(count: int) -> None:
             # 存入数据库
             if db_manager.add_question(db_data):
                 success_count += 1
-                print(f"  ✓ 题目 {db_data['id']} ({db_data['difficulty']}, {db_data['question_type']}) 已存入数据库")
+                print(f"  ✓ Question {db_data['id']} ({db_data['difficulty']}, {db_data['question_type']}) saved")
             else:
                 fail_count += 1
-                print(f"  ✗ 题目 {db_data['id']} 存入数据库失败")
+                print(f"  ✗ Failed to save question {db_data['id']}")
             
         except Exception as e:
-            print(f"  生成失败：{e}")
+            print(f"  Failed: {e}")
             fail_count += 1
         
         # 避免 API 速率限制（基础延迟）
         if i < count - 1:  # 最后一次不需要等待
             time.sleep(BASE_SLEEP_TIME)
     
-    print(f"\n生成完成！成功：{success_count}，失败：{fail_count}")
+    print(f"\nDone. Success: {success_count}, Failed: {fail_count}")
 
 
 if __name__ == "__main__":
-    # 运行 worker 生成 5 道题用于测试
-    worker(5)
+    worker(50)
