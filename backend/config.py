@@ -25,6 +25,28 @@ class Settings(BaseSettings):
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     OPENAI_EMBEDDING_DIMS: int = 1536
 
+    # A/B Testing
+    AB_TEST_ENABLED: bool = True
+    AB_EXPERIMENTS: dict = {
+        "tutor_strategy": {
+            "description": "Compare Socratic tutoring strategies",
+            "active": True,
+            "variants": {
+                "socratic_standard": 0.34,   # 标准苏格拉底 (gentle→moderate→direct)
+                "socratic_aggressive": 0.33,  # 加速苏格拉底 (moderate→direct→reveal)
+                "direct_explanation": 0.33,   # 直接给解析（无苏格拉底对话）
+            },
+        },
+        "explanation_source": {
+            "description": "RAG-enhanced vs baseline explanations",
+            "active": True,
+            "variants": {
+                "rag_enhanced": 0.5,
+                "baseline": 0.5,
+            },
+        },
+    }
+
     # 应用配置
     APP_ENV: str = "development"
     DEBUG: bool = True

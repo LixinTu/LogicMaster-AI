@@ -181,9 +181,10 @@ MOCK_DIAGNOSIS = {
 class TestStartRemediation:
     """测试 /api/tutor/start-remediation 端点"""
 
+    @patch("backend.routers.tutor.get_ab_test_service")
     @patch("backend.routers.tutor.get_tutor_agent")
     @patch("backend.routers.tutor.get_conversation_manager")
-    def test_start_remediation_success(self, mock_get_cm, mock_get_agent):
+    def test_start_remediation_success(self, mock_get_cm, mock_get_agent, mock_get_ab):
         # 设置 mock
         cm = ConversationManager()
         mock_get_cm.return_value = cm
@@ -192,6 +193,11 @@ class TestStartRemediation:
         agent.diagnose_error.return_value = MOCK_DIAGNOSIS
         agent.generate_socratic_hint.return_value = "What is the main conclusion?"
         mock_get_agent.return_value = agent
+
+        ab = MagicMock()
+        ab.assign_variant.return_value = "socratic_standard"
+        ab.log_exposure.return_value = True
+        mock_get_ab.return_value = ab
 
         resp = client.post("/api/tutor/start-remediation", json={
             "question_id": "test_q_001",
@@ -207,10 +213,12 @@ class TestStartRemediation:
         assert data["error_type"] == "correlation_causation"
         assert data["hint_count"] == 1
         assert data["current_state"] == STATE_HINTING
+        assert data["variant"] == "socratic_standard"
 
+    @patch("backend.routers.tutor.get_ab_test_service")
     @patch("backend.routers.tutor.get_tutor_agent")
     @patch("backend.routers.tutor.get_conversation_manager")
-    def test_start_remediation_fallback_on_error(self, mock_get_cm, mock_get_agent):
+    def test_start_remediation_fallback_on_error(self, mock_get_cm, mock_get_agent, mock_get_ab):
         """LLM 失败时的降级回退"""
         cm = ConversationManager()
         mock_get_cm.return_value = cm

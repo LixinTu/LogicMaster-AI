@@ -11,6 +11,25 @@ import random
 # FastAPI 后端地址
 API_BASE_URL = "http://localhost:8000"
 
+
+def _log_ab_outcome(user_id: str, variant: str, metric: str, value: float, metadata: dict = None):
+    """Week 4: 向 /api/analytics/log-outcome 提交 A/B 实验结果（fire-and-forget）"""
+    try:
+        http_requests.post(
+            f"{API_BASE_URL}/api/analytics/log-outcome",
+            json={
+                "user_id": user_id,
+                "experiment_name": "tutor_strategy",
+                "variant": variant or "socratic_standard",
+                "metric": metric,
+                "value": value,
+                "metadata": metadata,
+            },
+            timeout=3,
+        )
+    except Exception:
+        pass  # fire-and-forget
+
 # 页面配置
 st.set_page_config(page_title="MathQuest Labs — LogicMaster", layout="wide")
 
@@ -40,6 +59,21 @@ with st.sidebar:
         st.warning(f"API Offline ({API_BASE_URL})")
     else:
         st.warning("No API Key")
+
+    # Week 4: Session Analytics
+    st.divider()
+    st.subheader("Session Stats")
+    _s_attempt = st.session_state.get("attempt_count", 0)
+    _s_correct = st.session_state.get("correct_count", 0)
+    _s_accuracy = (_s_correct / _s_attempt * 100) if _s_attempt > 0 else 0
+    _s_theta = st.session_state.get("user_theta", 0.0)
+    _s_variant = st.session_state.get("ab_variant")
+    col_a, col_b = st.columns(2)
+    col_a.metric("Questions", _s_attempt)
+    col_b.metric("Accuracy", f"{_s_accuracy:.0f}%")
+    st.metric("Current Theta", f"{_s_theta:.2f}")
+    if _s_variant:
+        st.caption(f"A/B Variant: `{_s_variant}`")
 
 # 初始化 session_state
 if "chat_history" not in st.session_state:
@@ -154,6 +188,13 @@ if "current_q_id" not in st.session_state:
 
 if "socratic_context" not in st.session_state:
     st.session_state.socratic_context = {}
+
+# Week 4: 用户标识（A/B 分组用）
+if "user_id" not in st.session_state:
+    st.session_state.user_id = str(uuid.uuid4())
+
+if "ab_variant" not in st.session_state:
+    st.session_state.ab_variant = None
 
 # Week 3: LangChain Agent 对话状态
 if "conversation_id" not in st.session_state:
@@ -563,22 +604,26 @@ with col1:
                             
                             # 清空聊天历史
                             st.session_state.chat_history = []
-                            
+
                             # 更新 theta（使用 IRT 算法）
+                            old_theta = st.session_state.get("user_theta", 0.0)
                             try:
-                                current_theta = st.session_state.get("user_theta", 0.0)
                                 elo_difficulty = current_q.get("elo_difficulty", 1500.0)
-                                question_difficulty = (elo_difficulty - 1500.0) / 100.0  # 转换为 theta
+                                question_difficulty = (elo_difficulty - 1500.0) / 100.0
                                 theta_resp = http_requests.post(
                                     f"{API_BASE_URL}/api/theta/update",
-                                    json={"current_theta": current_theta, "question_difficulty": question_difficulty, "is_correct": True},
+                                    json={"current_theta": old_theta, "question_difficulty": question_difficulty, "is_correct": True},
                                     timeout=5,
                                 )
-                                new_theta = theta_resp.json()["new_theta"] if theta_resp.ok else current_theta
+                                new_theta = theta_resp.json()["new_theta"] if theta_resp.ok else old_theta
                                 st.session_state.user_theta = new_theta
                                 st.session_state.theta_history.append(new_theta)
                             except Exception as e:
-                                pass
+                                new_theta = old_theta
+
+                            # Week 4: 记录 A/B 实验结果
+                            _log_ab_outcome(st.session_state.user_id, st.session_state.ab_variant, "is_correct", 1.0, {"question_id": current_q_id, "attempt": 1})
+                            _log_ab_outcome(st.session_state.user_id, st.session_state.ab_variant, "theta_change", new_theta - old_theta, {"question_id": current_q_id})
 
                         else:
                             # 第1次答错：显示Incorrect，进入remediation
@@ -586,7 +631,7 @@ with col1:
                             st.session_state.phase = "remediation"
                             st.session_state.show_explanation = False  # 先不显示完整解析
 
-                            # Week 3: 调用 /api/tutor/start-remediation（LangChain Agent 诊断 + 首条提示）
+                            # Week 3+4: 调用 /api/tutor/start-remediation（A/B 分组 + LangChain Agent 诊断 + 首条提示）
                             try:
                                 with st.spinner("🤖 AI is analyzing your answer..."):
                                     rem_resp = http_requests.post(
@@ -596,6 +641,7 @@ with col1:
                                             "question": current_q,
                                             "user_choice": user_choice,
                                             "correct_choice": correct_choice,
+                                            "user_id": st.session_state.user_id,
                                         },
                                         timeout=30,
                                     )
@@ -604,6 +650,7 @@ with col1:
                                         st.session_state.conversation_id = rem_data["conversation_id"]
                                         st.session_state.tutor_hint_count = rem_data["hint_count"]
                                         st.session_state.tutor_understanding = rem_data["student_understanding"]
+                                        st.session_state.ab_variant = rem_data.get("variant", "socratic_standard")
                                         st.session_state.socratic_context = {
                                             "logic_gap": rem_data["logic_gap"],
                                             "error_type": rem_data["error_type"],
@@ -613,6 +660,10 @@ with col1:
                                             {"role": "user", "content": f"I chose answer: {user_choice}"},
                                             {"role": "assistant", "content": rem_data["first_hint"]},
                                         ]
+                                        # direct_explanation 变体：直接进入 finished
+                                        if rem_data.get("current_state") == "concluded":
+                                            st.session_state.phase = "finished"
+                                            st.session_state.show_explanation = True
                                     else:
                                         raise Exception(f"API returned {rem_resp.status_code}")
                             except Exception as e:
@@ -642,53 +693,55 @@ with col1:
                         
                         st.session_state.show_explanation = True
                         
+                        old_theta_2 = st.session_state.get("user_theta", 0.0)
                         if is_correct:
                             # 第2次答对：显示"Correct (after reasoning) ✅" + 解析
                             st.session_state.last_feedback = "Correct (after reasoning) ✅"
-                            
+
                             # 更新答题统计
                             st.session_state.attempt_count += 1
                             st.session_state.correct_count += 1
-                            
+
                             # 更新 theta（使用 IRT 算法）
                             try:
-                                current_theta = st.session_state.get("user_theta", 0.0)
                                 elo_difficulty = current_q.get("elo_difficulty", 1500.0)
-                                question_difficulty = (elo_difficulty - 1500.0) / 100.0  # 转换为 theta
+                                question_difficulty = (elo_difficulty - 1500.0) / 100.0
                                 theta_resp = http_requests.post(
                                     f"{API_BASE_URL}/api/theta/update",
-                                    json={"current_theta": current_theta, "question_difficulty": question_difficulty, "is_correct": True},
+                                    json={"current_theta": old_theta_2, "question_difficulty": question_difficulty, "is_correct": True},
                                     timeout=5,
                                 )
-                                new_theta = theta_resp.json()["new_theta"] if theta_resp.ok else current_theta
+                                new_theta = theta_resp.json()["new_theta"] if theta_resp.ok else old_theta_2
                                 st.session_state.user_theta = new_theta
-                                # question_count 在 questions_log 记录成功后更新（避免重复）
                                 st.session_state.theta_history.append(new_theta)
-                            except Exception as e:
-                                pass
+                            except Exception:
+                                new_theta = old_theta_2
                         else:
                             # 第2次答错：显示"Incorrect ❌" + 完整解析（包括正确选项）
                             st.session_state.last_feedback = "Incorrect ❌"
-                            
+
                             # 更新答题统计
                             st.session_state.attempt_count += 1
-                            
+
                             # 更新 theta（使用 IRT 算法，答错）
                             try:
-                                current_theta = st.session_state.get("user_theta", 0.0)
                                 elo_difficulty = current_q.get("elo_difficulty", 1500.0)
-                                question_difficulty = (elo_difficulty - 1500.0) / 100.0  # 转换为 theta
+                                question_difficulty = (elo_difficulty - 1500.0) / 100.0
                                 theta_resp = http_requests.post(
                                     f"{API_BASE_URL}/api/theta/update",
-                                    json={"current_theta": current_theta, "question_difficulty": question_difficulty, "is_correct": False},
+                                    json={"current_theta": old_theta_2, "question_difficulty": question_difficulty, "is_correct": False},
                                     timeout=5,
                                 )
-                                new_theta = theta_resp.json()["new_theta"] if theta_resp.ok else current_theta
+                                new_theta = theta_resp.json()["new_theta"] if theta_resp.ok else old_theta_2
                                 st.session_state.user_theta = new_theta
-                                # question_count 在 questions_log 记录成功后更新（避免重复）
                                 st.session_state.theta_history.append(new_theta)
-                            except Exception as e:
-                                pass
+                            except Exception:
+                                new_theta = old_theta_2
+
+                        # Week 4: 记录 A/B 实验结果（第2次作答）
+                        _log_ab_outcome(st.session_state.user_id, st.session_state.ab_variant, "is_correct", 1.0 if is_correct else 0.0, {"question_id": current_q.get("question_id", ""), "attempt": 2})
+                        _log_ab_outcome(st.session_state.user_id, st.session_state.ab_variant, "theta_change", new_theta - old_theta_2, {"question_id": current_q.get("question_id", "")})
+                        _log_ab_outcome(st.session_state.user_id, st.session_state.ab_variant, "hint_count", float(st.session_state.get("tutor_hint_count", 0)))
                         
                         # 记录题目标签信息到 questions_log（用于统计和BKT分析）
                         # 强制记录：is_correct, user_theta, skills

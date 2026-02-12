@@ -69,7 +69,31 @@ class DatabaseManager:
                         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
-                
+
+                # 创建 experiment_logs 表（Week 4: A/B Testing）
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS experiment_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT NOT NULL,
+                        experiment_name TEXT NOT NULL,
+                        variant TEXT NOT NULL,
+                        event_type TEXT NOT NULL DEFAULT 'exposure',
+                        outcome_metric TEXT,
+                        outcome_value REAL,
+                        metadata TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                # 索引：按实验+变体查询、按用户+实验查询
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_exp_variant
+                    ON experiment_logs (experiment_name, variant)
+                """)
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_user_exp
+                    ON experiment_logs (user_id, experiment_name)
+                """)
+
                 conn.commit()
                 conn.close()
                 
@@ -402,6 +426,133 @@ class DatabaseManager:
                 return []
         
         return []
+
+
+    # ========== A/B Testing: experiment_logs ==========
+
+    def insert_experiment_log(
+        self,
+        user_id: str,
+        experiment_name: str,
+        variant: str,
+        event_type: str = "exposure",
+        outcome_metric: Optional[str] = None,
+        outcome_value: Optional[float] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        插入一条实验日志（曝光或结果）
+
+        Args:
+            user_id: 用户标识
+            experiment_name: 实验名称
+            variant: 分配的变体
+            event_type: "exposure" 或 "outcome"
+            outcome_metric: 指标名称（如 "is_correct", "theta_gain"）
+            outcome_value: 指标数值
+            metadata: 额外元数据（JSON 序列化存储）
+
+        Returns:
+            成功返回 True
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            metadata_json = json.dumps(metadata, ensure_ascii=False) if metadata else None
+            cursor.execute("""
+                INSERT INTO experiment_logs
+                    (user_id, experiment_name, variant, event_type,
+                     outcome_metric, outcome_value, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, experiment_name, variant, event_type,
+                  outcome_metric, outcome_value, metadata_json))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"insert_experiment_log failed: {e}")
+            return False
+
+    def query_logs_by_experiment(
+        self,
+        experiment_name: str,
+        event_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        查询某个实验的所有日志
+
+        Args:
+            experiment_name: 实验名称
+            event_type: 可选过滤（"exposure" 或 "outcome"）
+
+        Returns:
+            日志字典列表
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            if event_type:
+                cursor.execute(
+                    "SELECT * FROM experiment_logs WHERE experiment_name = ? AND event_type = ? ORDER BY created_at",
+                    (experiment_name, event_type),
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM experiment_logs WHERE experiment_name = ? ORDER BY created_at",
+                    (experiment_name,),
+                )
+            rows = [dict(row) for row in cursor.fetchall()]
+            conn.close()
+            return rows
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"query_logs_by_experiment failed: {e}")
+            return []
+
+    def query_logs_by_user(
+        self,
+        user_id: str,
+        experiment_name: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        查询某个用户的实验日志
+
+        Args:
+            user_id: 用户标识
+            experiment_name: 可选：仅查某个实验
+
+        Returns:
+            日志字典列表
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            if experiment_name:
+                cursor.execute(
+                    "SELECT * FROM experiment_logs WHERE user_id = ? AND experiment_name = ? ORDER BY created_at",
+                    (user_id, experiment_name),
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM experiment_logs WHERE user_id = ? ORDER BY created_at",
+                    (user_id,),
+                )
+            rows = [dict(row) for row in cursor.fetchall()]
+            conn.close()
+            return rows
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"query_logs_by_user failed: {e}")
+            return []
 
 
 # 为了向后兼容，创建全局实例和函数包装器

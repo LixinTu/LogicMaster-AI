@@ -20,6 +20,7 @@ from backend.services.conversation_manager import (
     STATE_HINTING,
     STATE_CONCLUDED,
 )
+from backend.services.ab_testing import get_ab_test_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/tutor", tags=["tutor"])
@@ -80,6 +81,7 @@ class StartRemediationRequest(BaseModel):
     question: Dict[str, Any] = Field(..., description="完整题目字典")
     user_choice: str = Field(..., description="学生选择 (A-E)")
     correct_choice: str = Field(..., description="正确答案 (A-E)")
+    user_id: Optional[str] = Field(None, description="用户 ID（用于 A/B 分组）")
 
 
 class StartRemediationResponse(BaseModel):
@@ -90,6 +92,7 @@ class StartRemediationResponse(BaseModel):
     hint_count: int
     student_understanding: str
     current_state: str
+    variant: str = "socratic_standard"
 
 
 class ContinueRequest(BaseModel):
@@ -130,17 +133,27 @@ class ConcludeResponse(BaseModel):
 @router.post("/start-remediation", response_model=StartRemediationResponse)
 def start_remediation(req: StartRemediationRequest):
     """
-    新建 remediation 对话：诊断错误 → 生成第一条苏格拉底提示
+    新建 remediation 对话：A/B 分组 → 诊断错误 → 生成第一条提示（或直接解析）
     """
     try:
         cm = get_conversation_manager()
         agent = get_tutor_agent()
+        ab = get_ab_test_service()
+
+        # 0. A/B 分组
+        user_id = req.user_id or "anonymous"
+        variant = ab.assign_variant(user_id, "tutor_strategy") or "socratic_standard"
+        ab.log_exposure(user_id, "tutor_strategy", variant, metadata={"question_id": req.question_id})
 
         # 1. 创建对话
         conv = cm.create_conversation(question_id=req.question_id)
         cid = conv.conversation_id
 
-        # 2. 诊断错误
+        # 保存 A/B 信息到对话
+        conv.variant = variant
+        conv.user_id = user_id
+
+        # 2. 诊断错误（所有变体都需要诊断）
         diagnosis = agent.diagnose_error(
             question=req.question,
             user_choice=req.user_choice,
@@ -151,13 +164,7 @@ def start_remediation(req: StartRemediationRequest):
         key_assumption = diagnosis.get("key_assumption", "")
 
         # 保存诊断结果到对话状态
-        cm.update_state(
-            cid,
-            state=STATE_HINTING,
-            logic_gap=logic_gap,
-            error_type=error_type,
-        )
-        # 存储 key_assumption 和题目信息供后续使用
+        cm.update_state(cid, state=STATE_HINTING, logic_gap=logic_gap, error_type=error_type)
         conv.key_assumption = key_assumption
         conv.question = req.question
         conv.correct_choice = req.correct_choice
@@ -166,27 +173,54 @@ def start_remediation(req: StartRemediationRequest):
         # 3. 记录学生选择
         cm.add_message(cid, "user", f"I chose answer: {req.user_choice}")
 
-        # 4. 生成第一条提示 (hint_count=0 → gentle)
-        first_hint = agent.generate_socratic_hint(
-            question=req.question,
-            user_choice=req.user_choice,
-            logic_gap=logic_gap,
-            error_type=error_type,
-            hint_count=0,
-            chat_history=cm.get_context_for_llm(cid),
-        )
-        cm.add_message(cid, "assistant", first_hint)
-        cm.update_state(cid, hint_count=1)
+        # 4. 根据变体生成不同的首条回复
+        if variant == "direct_explanation":
+            # 直接给出解析（跳过苏格拉底对话）
+            explanation = (
+                f"The correct answer is {req.correct_choice}. "
+                f"{diagnosis.get('why_wrong', '')} "
+                f"The key assumption here: {key_assumption}"
+            )
+            cm.add_message(cid, "assistant", explanation)
+            cm.update_state(cid, state=STATE_CONCLUDED, hint_count=0)
 
-        return StartRemediationResponse(
-            conversation_id=cid,
-            first_hint=first_hint,
-            logic_gap=logic_gap,
-            error_type=error_type,
-            hint_count=1,
-            student_understanding="confused",
-            current_state=STATE_HINTING,
-        )
+            return StartRemediationResponse(
+                conversation_id=cid,
+                first_hint=explanation,
+                logic_gap=logic_gap,
+                error_type=error_type,
+                hint_count=0,
+                student_understanding="confused",
+                current_state=STATE_CONCLUDED,
+                variant=variant,
+            )
+        else:
+            # socratic_standard 或 socratic_aggressive: 生成苏格拉底提示
+            hint_count_start = 0
+            if variant == "socratic_aggressive":
+                hint_count_start = 1  # 从 moderate 强度开始
+
+            first_hint = agent.generate_socratic_hint(
+                question=req.question,
+                user_choice=req.user_choice,
+                logic_gap=logic_gap,
+                error_type=error_type,
+                hint_count=hint_count_start,
+                chat_history=cm.get_context_for_llm(cid),
+            )
+            cm.add_message(cid, "assistant", first_hint)
+            cm.update_state(cid, hint_count=hint_count_start + 1)
+
+            return StartRemediationResponse(
+                conversation_id=cid,
+                first_hint=first_hint,
+                logic_gap=logic_gap,
+                error_type=error_type,
+                hint_count=hint_count_start + 1,
+                student_understanding="confused",
+                current_state=STATE_HINTING,
+                variant=variant,
+            )
 
     except Exception as e:
         logger.error("start_remediation failed: %s", e)
@@ -200,10 +234,11 @@ def start_remediation(req: StartRemediationRequest):
         fallback_hint = "Let's take a step back. What is the main conclusion of the argument?"
         cm.add_message(cid, "assistant", fallback_hint)
 
-        # 保存最少必要状态
         conv.question = req.question
         conv.correct_choice = req.correct_choice
         conv.user_choice = req.user_choice
+        conv.variant = "socratic_standard"
+        conv.user_id = req.user_id or "anonymous"
 
         return StartRemediationResponse(
             conversation_id=cid,
@@ -213,6 +248,7 @@ def start_remediation(req: StartRemediationRequest):
             hint_count=1,
             student_understanding="confused",
             current_state=STATE_HINTING,
+            variant="socratic_standard",
         )
 
 
