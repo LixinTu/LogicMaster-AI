@@ -1,10 +1,15 @@
 """
 推荐算法模块：BKT (Bayesian Knowledge Tracing) 和自适应题目推荐
+
+支持两种最终选择策略：
+- legacy: 加权排序（基础分 + 技能加分）
+- bandit: Thompson Sampling（explore/exploit 平衡）
 """
 
 import uuid
 from typing import Dict, List, Any, Optional
 from utils.db_handler import DatabaseManager
+from engine.bandit_selector import get_bandit_selector
 
 
 def analyze_weak_skills(questions_log: List[Dict[str, Any]]) -> List[str]:
@@ -68,7 +73,8 @@ def generate_next_question(
     questions_log: List[Dict[str, Any]],
     session_state: Any,
     history_limit: int = 10,
-    db_manager: Optional[DatabaseManager] = None
+    db_manager: Optional[DatabaseManager] = None,
+    use_bandit: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """
     使用 IRT + BKT 混合推荐算法选择下一题
@@ -130,39 +136,49 @@ def generate_next_question(
         
         # 计算短板：遍历 questions_log，找出错误率最高的 3 个技能
         weak_skills: List[str] = analyze_weak_skills(questions_log)
-        
-        # 加权排序
+
+        # 弱项技能加分：优先包含短板技能的候选题目
         scored_candidates: List[tuple] = []
         for candidate in filtered_candidates:
             score: float = 0.0
-            
+
             # 基础分 = 1.0 - abs(题目难度 - 用户Theta)
             candidate_elo: float = candidate.get("elo_difficulty", 1500.0)
-            # 将 elo_difficulty 转换为 theta: theta = (elo - 1500) / 100
             candidate_theta: float = (candidate_elo - 1500.0) / 100.0
             difficulty_diff: float = abs(candidate_theta - user_theta)
             base_score: float = 1.0 - difficulty_diff
             score += base_score
-            
+
             # 加分项：如果题目含短板技能，+0.5
             candidate_skills: List[str] = candidate.get("skills", [])
             if isinstance(candidate_skills, list):
                 for skill in candidate_skills:
                     if skill in weak_skills:
                         score += 0.5
-                        break  # 每个技能只加一次分
-            
+                        break
+
             scored_candidates.append((candidate, score))
-        
-        # 决策：选最高分题目
+
         if not scored_candidates:
             return None
-        
-        # 按分数排序，选择最高分
-        scored_candidates.sort(key=lambda x: x[1], reverse=True)
-        next_question: Dict[str, Any]
-        best_score: float
-        next_question, best_score = scored_candidates[0]
+
+        # ------ 最终选择策略 ------
+        if use_bandit and len(filtered_candidates) > 1:
+            # Thompson Sampling：用 BKT 过滤后的候选通过 bandit 做最终选择
+            bandit = get_bandit_selector()
+            next_question = bandit.select_question(
+                theta=user_theta,
+                candidates=filtered_candidates,
+                explore_weight=0.3,
+            )
+            if next_question is None:
+                # 回退到加权排序
+                scored_candidates.sort(key=lambda x: x[1], reverse=True)
+                next_question = scored_candidates[0][0]
+        else:
+            # legacy：纯加权排序
+            scored_candidates.sort(key=lambda x: x[1], reverse=True)
+            next_question = scored_candidates[0][0]
         
         # 使用数据库中的 question_id
         question_id: str = next_question.get("id", "")

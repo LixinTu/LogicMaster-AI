@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from engine.recommender import generate_next_question
+from engine.bandit_selector import get_bandit_selector
 from utils.db_handler import DatabaseManager
 
 router = APIRouter(prefix="/api/questions", tags=["questions"])
@@ -56,6 +57,7 @@ class NextQuestionRequest(BaseModel):
     user_theta: float = Field(..., description="用户当前能力值", ge=-3.0, le=3.0)
     current_q_id: str = Field("", description="当前题目 ID（排除推荐）")
     questions_log: List[QuestionLogItem] = Field(default_factory=list, description="历史作答记录")
+    strategy: str = Field("bandit", description="选题策略：bandit（Thompson Sampling）或 legacy（加权排序）")
 
 
 class NextQuestionResponse(BaseModel):
@@ -89,6 +91,7 @@ def get_next_question(req: NextQuestionRequest):
     try:
         sys.stdout = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", errors="replace")
         sys.stderr = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", errors="replace")
+        use_bandit = req.strategy != "legacy"
         result = generate_next_question(
             user_theta=req.user_theta,
             current_q_id=req.current_q_id,
@@ -96,6 +99,7 @@ def get_next_question(req: NextQuestionRequest):
             session_state=mock_state,
             history_limit=10,
             db_manager=_db_manager,
+            use_bandit=use_bandit,
         )
     finally:
         sys.stdout, sys.stderr = old_stdout, old_stderr
@@ -113,3 +117,26 @@ def get_next_question(req: NextQuestionRequest):
         choices=result.get("choices", []),
         skills=result.get("skills", []),
     )
+
+
+# ---------- Bandit 更新端点 ----------
+
+class BanditUpdateRequest(BaseModel):
+    question_id: str = Field(..., description="题目 ID")
+    is_correct: bool = Field(..., description="是否答对")
+
+
+class BanditUpdateResponse(BaseModel):
+    status: str
+    question_id: str
+
+
+@router.post("/bandit-update", response_model=BanditUpdateResponse)
+def update_bandit_stats(req: BanditUpdateRequest):
+    """
+    更新 bandit 统计（答题后调用）。
+    将答题结果反馈给 Thompson Sampling，更新 Beta 分布参数。
+    """
+    bandit = get_bandit_selector()
+    bandit.update(question_id=req.question_id, is_correct=req.is_correct)
+    return BanditUpdateResponse(status="ok", question_id=req.question_id)
