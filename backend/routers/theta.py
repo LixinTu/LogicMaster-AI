@@ -3,6 +3,7 @@ IRT theta 更新 API
 直接复用 engine/scoring.py 中的 calculate_new_theta 和 estimate_gmat_score
 """
 
+from typing import Optional
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
@@ -17,6 +18,8 @@ class ThetaUpdateRequest(BaseModel):
     current_theta: float = Field(..., description="当前能力值 theta", ge=-3.0, le=3.0)
     question_difficulty: float = Field(..., description="题目难度参数")
     is_correct: bool = Field(..., description="是否答对")
+    discrimination: Optional[float] = Field(None, description="区分度 a（3PL），默认 1.0", ge=0.5, le=2.5)
+    guessing: Optional[float] = Field(None, description="猜测参数 c（3PL），默认 0.2", ge=0.0, le=0.5)
 
 
 class ThetaUpdateResponse(BaseModel):
@@ -30,13 +33,19 @@ class ThetaUpdateResponse(BaseModel):
 def update_theta(req: ThetaUpdateRequest):
     """
     根据作答结果更新用户能力值 theta，并返回 GMAT 估分。
-    直接调用 engine.scoring 中的现有函数。
+    支持 3PL 参数（discrimination, guessing），不传则使用默认值。
     """
-    new_theta = calculate_new_theta(
-        current_theta=req.current_theta,
-        question_difficulty=req.question_difficulty,
-        is_correct=req.is_correct,
-    )
+    kwargs = {
+        "current_theta": req.current_theta,
+        "question_difficulty": req.question_difficulty,
+        "is_correct": req.is_correct,
+    }
+    if req.discrimination is not None:
+        kwargs["discrimination"] = req.discrimination
+    if req.guessing is not None:
+        kwargs["guessing"] = req.guessing
+
+    new_theta = calculate_new_theta(**kwargs)
     gmat_score = estimate_gmat_score(new_theta)
 
     return ThetaUpdateResponse(new_theta=new_theta, gmat_score=gmat_score)

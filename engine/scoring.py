@@ -1,80 +1,209 @@
 """
 评分算法模块：IRT (Item Response Theory) 和 GMAT 分数估算
 
-实现基于单参数逻辑斯蒂模型（1PL/2PL）的能力估计和分数映射。
+实现三参数逻辑斯蒂模型（3PL）的能力估计、分数映射、信息函数和参数校准。
 """
 
 import math
+from typing import Any, Dict, List, Optional, Tuple
 
 
-def calculate_new_theta(current_theta: float, question_difficulty: float, is_correct: bool) -> float:
+# ---------------------------------------------------------------------------
+# 3PL 概率函数
+# ---------------------------------------------------------------------------
+
+def probability_3pl(
+    theta: float,
+    b: float,
+    a: float = 1.0,
+    c: float = 0.2,
+) -> float:
     """
-    基于 IRT 的极大似然估计（MLE）更新用户能力参数 theta。
-    
-    使用单参数逻辑斯蒂模型（1PL）的期望后验估计（EAP）方法：
-    - 计算在给定能力值下答对的期望概率 P(θ)
-    - 使用实际得分与期望得分的残差更新能力估计
-    - 学习率 0.4 基于经验值，平衡收敛速度与稳定性
-    
+    三参数逻辑斯蒂模型（3PL）的正确回答概率。
+
+    P(θ) = c + (1 - c) / (1 + exp(-a * (θ - b)))
+
     Args:
-        current_theta: 当前能力估计值（标准正态分布尺度，通常 [-3, 3]）
-        question_difficulty: 题目难度参数（与能力值同尺度）
-        is_correct: 实际作答结果（1=正确，0=错误）
-    
-    Returns:
-        更新后的能力估计值，截断至 [-3.0, 3.0] 以符合标准尺度
-    """
-    # 计算能力-难度差异
-    diff = current_theta - question_difficulty
-    
-    # 单参数逻辑斯蒂模型：P(θ) = 1 / (1 + exp(-D * (θ - b)))
-    # 系数 D=1.7 用于将逻辑斯蒂曲线近似为正态 ogive 模型（probit link）
-    # 该系数使得逻辑斯蒂模型在能力-难度差异为 ±1.7 时，概率接近正态分布的累积分布函数
-    p_expect = 1.0 / (1.0 + math.exp(-1.7 * diff))
-    
-    # 二元评分：实际得分（0 或 1）
-    actual_score = 1.0 if is_correct else 0.0
-    
-    # EAP 更新：theta_new = theta_old + learning_rate * (observed - expected)
-    # 学习率 0.4 基于 Wright & Stone (1979) 的推荐值，适用于自适应测试场景
-    new_theta = current_theta + 0.4 * (actual_score - p_expect)
-    
-    # 截断至标准 IRT 尺度范围（避免极端值导致数值不稳定）
-    new_theta = max(-3.0, min(3.0, new_theta))
-    
-    return new_theta
+        theta: 用户能力值
+        b: 题目难度参数（theta 尺度）
+        a: 区分度参数（默认 1.0，有效范围 0.5–2.5）
+        c: 猜测参数（默认 0.2，5 选 1 GMAT 题目的基线概率）
 
+    Returns:
+        正确回答概率，范围 [c, 1.0]
+    """
+    exponent = -a * (theta - b)
+    # 防止溢出
+    if exponent > 700:
+        return c
+    if exponent < -700:
+        return 1.0
+    return c + (1.0 - c) / (1.0 + math.exp(exponent))
+
+
+# ---------------------------------------------------------------------------
+# Theta 更新
+# ---------------------------------------------------------------------------
+
+def calculate_new_theta(
+    current_theta: float,
+    question_difficulty: float,
+    is_correct: bool,
+    discrimination: float = 1.0,
+    guessing: float = 0.2,
+) -> float:
+    """
+    基于 3PL IRT 模型更新用户能力参数 theta。
+
+    使用期望后验估计（EAP）方法：
+    - 计算 3PL 概率 P(θ)
+    - theta_new = theta_old + lr * (observed - P(θ))
+
+    Args:
+        current_theta: 当前能力估计值（[-3, 3]）
+        question_difficulty: 题目难度参数（theta 尺度）
+        is_correct: 是否答对
+        discrimination: 区分度 a（默认 1.0）
+        guessing: 猜测参数 c（默认 0.2）
+
+    Returns:
+        更新后的能力估计值，截断至 [-3.0, 3.0]
+    """
+    p_expect = probability_3pl(
+        theta=current_theta,
+        b=question_difficulty,
+        a=discrimination,
+        c=guessing,
+    )
+
+    actual_score = 1.0 if is_correct else 0.0
+
+    # EAP 更新：学习率 0.4
+    new_theta = current_theta + 0.4 * (actual_score - p_expect)
+
+    return max(-3.0, min(3.0, new_theta))
+
+
+# ---------------------------------------------------------------------------
+# GMAT 分数映射
+# ---------------------------------------------------------------------------
 
 def estimate_gmat_score(theta: float) -> int:
     """
-    将 IRT 能力参数 theta 映射到 GMAT Critical Reasoning 分数（20-51 分制）。
-    
-    线性映射基于 ETS 公布的 GMAT 分数转换表近似：
-    - theta = -3.0 对应约 20 分（最低分）
-    - theta = 0.0 对应约 30 分（平均分）
-    - theta = +3.0 对应约 51 分（最高分）
-    
-    斜率 7.0 通过三点线性插值确定，近似 GMAT 官方分数转换曲线。
-    
+    将 IRT 能力参数 theta 映射到 GMAT Critical Reasoning 分数（20–51）。
+
+    线性映射：score = 30 + 7 * theta
+
     Args:
-        theta: IRT 能力参数（标准正态分布尺度）
-    
+        theta: IRT 能力参数
+
     Returns:
-        GMAT CR 分数（整数，范围 [20, 51]）
+        GMAT CR 分数（整数，[20, 51]）
     """
-    # 线性映射：score = baseline + slope * theta
-    # baseline = 30（平均分），slope = 7.0（每单位 theta 对应 7 分）
     score = 30.0 + (theta * 7.0)
-    
-    # 截断至 GMAT CR 有效分数范围
     score = max(20, min(51, score))
-    
     return int(round(score))
 
 
-# TODO: Implement multi-dimensional IRT (MIRT) for correlated skill tracking
-# Current implementation uses unidimensional IRT, assuming a single latent ability.
-# MIRT would enable modeling multiple correlated skills (e.g., causal reasoning,
-# assumption identification) simultaneously, providing more granular diagnostic
-# information and improved adaptive question selection based on skill-specific
-# proficiency estimates.
+# ---------------------------------------------------------------------------
+# 信息函数
+# ---------------------------------------------------------------------------
+
+def item_information(
+    theta: float,
+    b: float,
+    a: float = 1.0,
+    c: float = 0.2,
+) -> float:
+    """
+    3PL 信息函数：衡量题目在给定能力水平下的信息量。
+
+    I(θ) = a² * (P - c)² * (1 - P) / ((1 - c)² * P)
+
+    信息值越高，该题目对估计该能力水平的考生越有区分价值。
+    用于自适应测试中的最优题目选择。
+
+    Args:
+        theta: 能力值
+        b: 难度参数
+        a: 区分度参数
+        c: 猜测参数
+
+    Returns:
+        信息量（非负浮点数）
+    """
+    p = probability_3pl(theta, b, a, c)
+    # 避免除以零
+    if p <= c or p >= 1.0:
+        return 0.0
+    numerator = (a ** 2) * ((p - c) ** 2) * (1.0 - p)
+    denominator = ((1.0 - c) ** 2) * p
+    return numerator / denominator
+
+
+# ---------------------------------------------------------------------------
+# 参数校准（MLE）
+# ---------------------------------------------------------------------------
+
+def calibrate_item_parameters(
+    response_history: List[Dict[str, Any]],
+    initial_a: float = 1.0,
+    initial_b: float = 0.0,
+    initial_c: float = 0.2,
+) -> Dict[str, float]:
+    """
+    使用极大似然估计（MLE）从学生作答数据校准单个题目的 3PL 参数。
+
+    通过 scipy.optimize.minimize 最小化负对数似然函数。
+
+    Args:
+        response_history: 作答记录列表，每条记录包含：
+            - theta (float): 作答时的学生能力值
+            - is_correct (bool): 是否答对
+        initial_a: 区分度初始值
+        initial_b: 难度初始值
+        initial_c: 猜测参数初始值
+
+    Returns:
+        校准后的参数字典：{"a": ..., "b": ..., "c": ..., "converged": bool}
+    """
+    from scipy.optimize import minimize
+
+    if len(response_history) < 5:
+        return {
+            "a": initial_a,
+            "b": initial_b,
+            "c": initial_c,
+            "converged": False,
+        }
+
+    thetas = [r["theta"] for r in response_history]
+    responses = [1.0 if r["is_correct"] else 0.0 for r in response_history]
+
+    def neg_log_likelihood(params: List[float]) -> float:
+        a_val, b_val, c_val = params
+        # 参数边界惩罚
+        if a_val <= 0.01 or c_val < 0.0 or c_val >= 1.0:
+            return 1e12
+        nll = 0.0
+        for th, y in zip(thetas, responses):
+            p = probability_3pl(th, b_val, a_val, c_val)
+            # 钳制概率避免 log(0)
+            p = max(1e-10, min(1.0 - 1e-10, p))
+            nll -= y * math.log(p) + (1.0 - y) * math.log(1.0 - p)
+        return nll
+
+    result = minimize(
+        neg_log_likelihood,
+        x0=[initial_a, initial_b, initial_c],
+        method="L-BFGS-B",
+        bounds=[(0.5, 2.5), (-3.0, 3.0), (0.0, 0.35)],
+    )
+
+    a_est, b_est, c_est = result.x
+    return {
+        "a": round(float(a_est), 4),
+        "b": round(float(b_est), 4),
+        "c": round(float(c_est), 4),
+        "converged": bool(result.success),
+    }

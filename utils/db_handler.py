@@ -94,6 +94,13 @@ class DatabaseManager:
                     ON experiment_logs (user_id, experiment_name)
                 """)
 
+                # 3PL IRT 参数列（向后兼容：仅在列不存在时添加）
+                existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(questions)").fetchall()}
+                if "discrimination" not in existing_cols:
+                    cursor.execute("ALTER TABLE questions ADD COLUMN discrimination REAL DEFAULT 1.0")
+                if "guessing" not in existing_cols:
+                    cursor.execute("ALTER TABLE questions ADD COLUMN guessing REAL DEFAULT 0.2")
+
                 conn.commit()
                 conn.close()
                 
