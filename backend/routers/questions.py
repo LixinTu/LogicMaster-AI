@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from engine.recommender import generate_next_question
 from engine.bandit_selector import get_bandit_selector
+from engine.spaced_repetition import get_spaced_repetition_model
 from utils.db_handler import DatabaseManager
 
 router = APIRouter(prefix="/api/questions", tags=["questions"])
@@ -136,7 +137,47 @@ def update_bandit_stats(req: BanditUpdateRequest):
     """
     更新 bandit 统计（答题后调用）。
     将答题结果反馈给 Thompson Sampling，更新 Beta 分布参数。
+    同时更新间隔重复的 half-life。
     """
     bandit = get_bandit_selector()
     bandit.update(question_id=req.question_id, is_correct=req.is_correct)
+    # 同步更新间隔重复统计
+    try:
+        sr_model = get_spaced_repetition_model()
+        sr_model.update_half_life(question_id=req.question_id, is_correct=req.is_correct)
+    except Exception:
+        pass  # 间隔重复更新失败时静默降级
     return BanditUpdateResponse(status="ok", question_id=req.question_id)
+
+
+# ---------- 间隔重复端点 ----------
+
+class ReviewItem(BaseModel):
+    question_id: str
+    recall_probability: float
+    half_life: float
+    elapsed_days: float
+
+
+class ReviewScheduleResponse(BaseModel):
+    user_id: str
+    threshold: float
+    due_count: int
+    reviews: List[ReviewItem]
+
+
+@router.get("/review-schedule", response_model=ReviewScheduleResponse)
+def get_review_schedule(user_id: str = "default", threshold: float = 0.5):
+    """
+    返回需要复习的题目列表（回忆概率低于阈值）。
+    基于 Half-Life Regression 遗忘曲线计算。
+    """
+    sr_model = get_spaced_repetition_model(user_id=user_id)
+    candidates = sr_model.get_review_candidates(threshold=threshold)
+    reviews = [ReviewItem(**c) for c in candidates]
+    return ReviewScheduleResponse(
+        user_id=user_id,
+        threshold=threshold,
+        due_count=len(reviews),
+        reviews=reviews,
+    )

@@ -94,6 +94,19 @@ class DatabaseManager:
                     ON experiment_logs (user_id, experiment_name)
                 """)
 
+                # 间隔重复统计表（Half-Life Regression）
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS spaced_repetition_stats (
+                        user_id TEXT NOT NULL,
+                        question_id TEXT NOT NULL,
+                        half_life REAL NOT NULL DEFAULT 1.0,
+                        last_practiced TIMESTAMP NOT NULL,
+                        n_correct INTEGER NOT NULL DEFAULT 0,
+                        n_attempts INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY (user_id, question_id)
+                    )
+                """)
+
                 # 3PL IRT 参数列（向后兼容：仅在列不存在时添加）
                 existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(questions)").fetchall()}
                 if "discrimination" not in existing_cols:

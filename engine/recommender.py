@@ -4,12 +4,61 @@
 支持两种最终选择策略：
 - legacy: 加权排序（基础分 + 技能加分）
 - bandit: Thompson Sampling（explore/exploit 平衡）
+
+间隔重复注入：
+- 答过的题目若回忆概率 < 0.5，以 40% 概率插入复习题
 """
 
+import random
 import uuid
 from typing import Dict, List, Any, Optional
 from utils.db_handler import DatabaseManager
 from engine.bandit_selector import get_bandit_selector
+from engine.spaced_repetition import get_spaced_repetition_model
+
+
+def _build_question_snapshot(
+    next_question: Dict[str, Any],
+    question_id: str,
+    session_state: Any,
+) -> Dict[str, Any]:
+    """
+    从候选题目构建完整题目快照，并更新 session_state。
+
+    内部辅助函数，供 generate_next_question 的各条选择路径复用。
+    """
+    current_q: Dict[str, Any] = {
+        "question_id": question_id,
+        "difficulty": next_question.get("difficulty", "medium"),
+        "question_type": next_question.get("question_type", "Weaken"),
+        "stimulus": next_question.get("stimulus", ""),
+        "question": next_question.get("question", ""),
+        "choices": next_question.get("choices", []),
+        "correct": next_question.get("correct", ""),
+        "correct_choice": next_question.get("correct", ""),
+        "explanation": next_question.get("explanation", ""),
+        "tags": [],
+        "skills": next_question.get("skills", []),
+        "label_source": next_question.get("label_source", "Unknown"),
+        "skills_rationale": next_question.get("skills_rationale", ""),
+        "detailed_explanation": next_question.get("detailed_explanation", ""),
+        "diagnoses": next_question.get("diagnoses", {}),
+        "elo_difficulty": next_question.get("elo_difficulty", 1500.0),
+    }
+
+    session_state.current_q = current_q
+    session_state.current_q_id = question_id
+    session_state.current_question = current_q
+    session_state.radio_key += 1
+    session_state.attempt = 0
+    session_state.phase = "answering"
+    session_state.last_feedback = ""
+    session_state.show_explanation = False
+    session_state.pending_next_question = False
+    session_state.socratic_context = {}
+    session_state.chat_history = []
+
+    return current_q
 
 
 def analyze_weak_skills(questions_log: List[Dict[str, Any]]) -> List[str]:
@@ -75,6 +124,7 @@ def generate_next_question(
     history_limit: int = 10,
     db_manager: Optional[DatabaseManager] = None,
     use_bandit: bool = True,
+    use_spaced_repetition: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """
     使用 IRT + BKT 混合推荐算法选择下一题
@@ -162,6 +212,36 @@ def generate_next_question(
         if not scored_candidates:
             return None
 
+        # ------ 间隔重复注入 ------
+        # 如果有需要复习的题目（recall_prob < 0.5），以 40% 概率插入复习题
+        if use_spaced_repetition:
+            try:
+                sr_model = get_spaced_repetition_model()
+                review_candidates = sr_model.get_review_candidates(threshold=0.5)
+                if review_candidates:
+                    # 筛选：复习题必须在当前候选列表中
+                    candidate_ids = {c.get("id", "") for c in filtered_candidates}
+                    matched_reviews = [
+                        r for r in review_candidates
+                        if r["question_id"] in candidate_ids
+                    ]
+                    if matched_reviews and random.random() < 0.4:
+                        # 选回忆概率最低的复习题
+                        review_q_id = matched_reviews[0]["question_id"]
+                        for c in filtered_candidates:
+                            if c.get("id", "") == review_q_id:
+                                next_question = c
+                                # 跳过 bandit/legacy 选择，直接用复习题
+                                # 跳转到构建 current_q 的代码
+                                question_id = next_question.get("id", "")
+                                if not question_id:
+                                    question_id = str(uuid.uuid4())[:8]
+                                return _build_question_snapshot(
+                                    next_question, question_id, session_state
+                                )
+            except Exception:
+                pass  # 间隔重复失败时静默降级
+
         # ------ 最终选择策略 ------
         if use_bandit and len(filtered_candidates) > 1:
             # Thompson Sampling：用 BKT 过滤后的候选通过 bandit 做最终选择
@@ -184,49 +264,8 @@ def generate_next_question(
         question_id: str = next_question.get("id", "")
         if not question_id:
             question_id = str(uuid.uuid4())[:8]
-        
-        # 创建完整题目快照（current_q）
-        # 确保所有必要字段都存在（包括技能标签相关字段）
-        # 保留与旧代码完全兼容的字典结构
-        current_q: Dict[str, Any] = {
-            "question_id": question_id,
-            "difficulty": next_question.get("difficulty", "medium"),
-            "question_type": next_question.get("question_type", "Weaken"),
-            "stimulus": next_question.get("stimulus", ""),
-            "question": next_question.get("question", ""),
-            "choices": next_question.get("choices", []),
-            "correct": next_question.get("correct", ""),
-            "correct_choice": next_question.get("correct", ""),  # 兼容字段
-            "explanation": next_question.get("explanation", ""),  # 基础解析，后续会升级
-            "tags": [],  # 可选标签
-            # 技能标签相关字段（确保存在）
-            "skills": next_question.get("skills", []),
-            "label_source": next_question.get("label_source", "Unknown"),
-            "skills_rationale": next_question.get("skills_rationale", ""),
-            # 预生成的详细解析和诊断（从数据库读取）
-            "detailed_explanation": next_question.get("detailed_explanation", ""),
-            "diagnoses": next_question.get("diagnoses", {}),
-            # 添加 elo_difficulty 用于后续 theta 更新
-            "elo_difficulty": next_question.get("elo_difficulty", 1500.0)
-        }
-        
-        # 更新锁题状态（只有在 phase == "finished" 时才允许覆盖）
-        session_state.current_q = current_q
-        session_state.current_q_id = question_id
-        session_state.current_question = current_q  # 兼容旧代码
-        
-        # 重置状态（保留原有逻辑）
-        session_state.radio_key += 1  # 增加 radio_key 以重置 radio widget
-        session_state.attempt = 0
-        session_state.phase = "answering"
-        session_state.last_feedback = ""
-        session_state.show_explanation = False
-        session_state.pending_next_question = False
-        session_state.socratic_context = {}  # 清空苏格拉底上下文
-        session_state.chat_history = []  # 清空聊天历史
-        # 注意：selected_choice 由 radio widget 自动管理，不需要手动重置
-        
-        return current_q
+
+        return _build_question_snapshot(next_question, question_id, session_state)
         
     except Exception as e:
         print(f"❌ 读取题目失败：{e}")
