@@ -263,7 +263,10 @@ class TestContinueRemediation:
         mock_get_cm.return_value = cm
 
         agent = MagicMock()
-        agent.evaluate_understanding.return_value = {"understanding": "partial", "reasoning": "ok"}
+        agent.evaluate_blooms_level.return_value = {
+            "level": 3, "level_name": "Apply",
+            "reasoning": "ok", "mapped_understanding": "partial",
+        }
         agent.generate_socratic_hint.return_value = "Consider whether wealth is a factor."
         mock_get_agent.return_value = agent
 
@@ -295,7 +298,10 @@ class TestContinueRemediation:
         mock_get_cm.return_value = cm
 
         agent = MagicMock()
-        agent.evaluate_understanding.return_value = {"understanding": "clear", "reasoning": "Student got it"}
+        agent.evaluate_blooms_level.return_value = {
+            "level": 5, "level_name": "Evaluate",
+            "reasoning": "Student got it", "mapped_understanding": "clear",
+        }
         agent.generate_conclusion.return_value = "Great! The answer is A."
         mock_get_agent.return_value = agent
 

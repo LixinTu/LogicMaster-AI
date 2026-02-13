@@ -434,6 +434,12 @@ if "tutor_hint_count" not in st.session_state:
 if "tutor_understanding" not in st.session_state:
     st.session_state.tutor_understanding = "confused"
 
+if "tutor_blooms_level" not in st.session_state:
+    st.session_state.tutor_blooms_level = 1
+
+if "tutor_blooms_name" not in st.session_state:
+    st.session_state.tutor_blooms_name = "Remember"
+
 if "show_answer" not in st.session_state:
     st.session_state.show_answer = False
 
@@ -697,6 +703,8 @@ if page == "Practice":
                                             st.session_state.conversation_id = None
                                             st.session_state.tutor_hint_count = 0
                                             st.session_state.tutor_understanding = "confused"
+                                            st.session_state.tutor_blooms_level = 1
+                                            st.session_state.tutor_blooms_name = "Remember"
                                         else:
                                             result = None  # 数据库中找不到对应题目，走 fallback
                                     except Exception:
@@ -911,6 +919,8 @@ if page == "Practice":
                                     st.session_state.conversation_id = None
                                     st.session_state.tutor_hint_count = 1
                                     st.session_state.tutor_understanding = "confused"
+                                    st.session_state.tutor_blooms_level = 1
+                                    st.session_state.tutor_blooms_name = "Remember"
                                     st.session_state.socratic_context = {
                                         "question_id": current_q_id,
                                         "correct_choice": correct_choice,
@@ -1017,6 +1027,8 @@ if page == "Practice":
                             st.session_state.conversation_id = None
                             st.session_state.tutor_hint_count = 0
                             st.session_state.tutor_understanding = "confused"
+                            st.session_state.tutor_blooms_level = 1
+                            st.session_state.tutor_blooms_name = "Remember"
 
                         st.rerun()
             else:
@@ -1032,16 +1044,14 @@ if page == "Practice":
 
                 # Week 3: 理解度进度条 + 提示计数器
                 hint_count = st.session_state.get("tutor_hint_count", 0)
-                understanding = st.session_state.get("tutor_understanding", "confused")
-                understanding_map = {"confused": 0.15, "partial": 0.55, "clear": 1.0}
-                understanding_label = {"confused": "Confused", "partial": "Partial", "clear": "Clear"}
-                prog_val = understanding_map.get(understanding, 0.15)
-                prog_label = understanding_label.get(understanding, "Confused")
+                blooms_level = st.session_state.get("tutor_blooms_level", 1)
+                blooms_name = st.session_state.get("tutor_blooms_name", "Remember")
+                prog_val = blooms_level / 6.0
                 col_hint, col_und = st.columns(2)
                 with col_hint:
                     st.metric("Hints Given", f"{hint_count} / 3")
                 with col_und:
-                    st.caption(f"Understanding: **{prog_label}**")
+                    st.caption(f"Bloom's Level: **{blooms_name} ({blooms_level}/6)**")
                     st.progress(prog_val)
 
             st.divider()
@@ -1080,6 +1090,8 @@ if page == "Practice":
                                 cont_data = cont_resp.json()
                                 st.session_state.tutor_hint_count = cont_data["hint_count"]
                                 st.session_state.tutor_understanding = cont_data["student_understanding"]
+                                st.session_state.tutor_blooms_level = cont_data.get("blooms_level", 1)
+                                st.session_state.tutor_blooms_name = cont_data.get("blooms_name", "Remember")
                                 # 同步前端聊天历史
                                 st.session_state.chat_history.append({"role": "user", "content": user_input})
                                 st.session_state.chat_history.append({"role": "assistant", "content": cont_data["reply"]})

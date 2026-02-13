@@ -108,6 +108,8 @@ class ContinueResponse(BaseModel):
     student_understanding: str
     should_continue: bool
     current_state: str
+    blooms_level: int = 1
+    blooms_name: str = "Remember"
 
 
 class ConcludeRequest(BaseModel):
@@ -121,6 +123,8 @@ class ConversationSummary(BaseModel):
     hint_count: int
     final_understanding: str
     time_spent_seconds: float
+    blooms_level: int = 1
+    blooms_progression: List[int] = []
 
 
 class ConcludeResponse(BaseModel):
@@ -273,21 +277,23 @@ def continue_remediation(req: ContinueRequest):
         # 1. 记录学生消息
         cm.add_message(cid, "user", req.student_message)
 
-        # 2. 评估理解程度
-        eval_result = agent.evaluate_understanding(
+        # 2. 用 Bloom's Taxonomy 评估认知水平
+        blooms_result = agent.evaluate_blooms_level(
             student_response=req.student_message,
             logic_gap=conv.logic_gap,
             key_assumption=getattr(conv, "key_assumption", ""),
             chat_history=cm.get_context_for_llm(cid),
         )
-        understanding = eval_result.get("understanding", "confused")
-        cm.update_state(cid, understanding=understanding)
+        blooms_level = blooms_result["level"]
+        blooms_name = blooms_result["level_name"]
+        understanding = blooms_result["mapped_understanding"]
+        cm.update_state(cid, understanding=understanding, blooms_level=blooms_level)
 
-        # 3. 判断是否继续
+        # 3. 判断是否继续（Bloom's 5-6 也触发结束）
         should_continue = cm.should_continue_remediation(cid)
 
         if should_continue:
-            # 生成下一条提示（强度递增）
+            # 生成下一条提示（强度递增 + Bloom's 策略调整）
             hint = agent.generate_socratic_hint(
                 question=question,
                 user_choice=getattr(conv, "user_choice", ""),
@@ -295,6 +301,7 @@ def continue_remediation(req: ContinueRequest):
                 error_type=conv.error_type,
                 hint_count=conv.hint_count,
                 chat_history=cm.get_context_for_llm(cid),
+                blooms_level=blooms_level,
             )
             cm.add_message(cid, "assistant", hint)
             new_hint_count = conv.hint_count + 1
@@ -306,6 +313,8 @@ def continue_remediation(req: ContinueRequest):
                 student_understanding=understanding,
                 should_continue=True,
                 current_state=STATE_HINTING,
+                blooms_level=blooms_level,
+                blooms_name=blooms_name,
             )
         else:
             # 生成结论（揭示正确答案）
@@ -324,6 +333,8 @@ def continue_remediation(req: ContinueRequest):
                 student_understanding=understanding,
                 should_continue=False,
                 current_state=STATE_CONCLUDED,
+                blooms_level=blooms_level,
+                blooms_name=blooms_name,
             )
 
     except Exception as e:
@@ -375,6 +386,8 @@ def conclude_remediation(req: ConcludeRequest):
                 hint_count=summary_dict.get("hint_count", 0),
                 final_understanding=summary_dict.get("final_understanding", "confused"),
                 time_spent_seconds=summary_dict.get("time_spent_seconds", 0.0),
+                blooms_level=summary_dict.get("blooms_level", 1),
+                blooms_progression=summary_dict.get("blooms_progression", []),
             ),
         )
 
@@ -384,6 +397,7 @@ def conclude_remediation(req: ConcludeRequest):
         summary_dict = cm.conclude(req.conversation_id) or {
             "total_turns": 0, "hint_count": 0,
             "final_understanding": "confused", "time_spent_seconds": 0.0,
+            "blooms_level": 1, "blooms_progression": [],
         }
         fallback_conclusion = (
             f"The correct answer is {correct_choice}. "
@@ -396,5 +410,7 @@ def conclude_remediation(req: ConcludeRequest):
                 hint_count=summary_dict.get("hint_count", 0),
                 final_understanding=summary_dict.get("final_understanding", "confused"),
                 time_spent_seconds=summary_dict.get("time_spent_seconds", 0.0),
+                blooms_level=summary_dict.get("blooms_level", 1),
+                blooms_progression=summary_dict.get("blooms_progression", []),
             ),
         )

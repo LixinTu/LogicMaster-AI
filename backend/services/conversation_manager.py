@@ -33,6 +33,8 @@ class Conversation:
         self.current_state: str = STATE_DIAGNOSING
         self.hint_count: int = 0
         self.student_understanding: str = UNDERSTANDING_CONFUSED
+        self.blooms_level: int = 1
+        self.blooms_history: List[int] = []
         self.logic_gap: str = ""
         self.error_type: str = ""
         self.created_at: float = time.time()
@@ -46,6 +48,8 @@ class Conversation:
             "current_state": self.current_state,
             "hint_count": self.hint_count,
             "student_understanding": self.student_understanding,
+            "blooms_level": self.blooms_level,
+            "blooms_history": self.blooms_history,
             "logic_gap": self.logic_gap,
             "error_type": self.error_type,
             "chat_history_length": len(self.chat_history),
@@ -163,6 +167,7 @@ class ConversationManager:
         understanding: Optional[str] = None,
         logic_gap: Optional[str] = None,
         error_type: Optional[str] = None,
+        blooms_level: Optional[int] = None,
     ) -> bool:
         """
         更新对话状态字段
@@ -183,6 +188,9 @@ class ConversationManager:
             conv.logic_gap = logic_gap
         if error_type is not None:
             conv.error_type = error_type
+        if blooms_level is not None:
+            conv.blooms_level = blooms_level
+            conv.blooms_history.append(blooms_level)
         conv.updated_at = time.time()
         return True
 
@@ -203,6 +211,8 @@ class ConversationManager:
             "total_turns": len([m for m in conv.chat_history if m["role"] == "user"]),
             "hint_count": conv.hint_count,
             "final_understanding": conv.student_understanding,
+            "blooms_level": conv.blooms_level,
+            "blooms_progression": conv.blooms_history,
             "time_spent_seconds": round(conv.updated_at - conv.created_at, 1),
         }
 

@@ -127,6 +127,38 @@ Criteria:
 Output JSON only."""),
         ])
 
+        self.blooms_prompt = ChatPromptTemplate.from_messages([
+            ("system",
+             "You are an educational assessment expert using Bloom's Taxonomy. "
+             "Classify the student's cognitive level and output strict JSON only."),
+            ("human", """\
+The student was asked about a GMAT Critical Reasoning question:
+- Logic gap: {logic_gap}
+- Key assumption: {key_assumption}
+
+The student's latest response:
+"{student_response}"
+
+Recent chat context:
+{chat_history_text}
+
+Classify the student's response into one of 6 Bloom's Taxonomy levels:
+1-Remember: student just recalls facts ("the answer is C")
+2-Understand: student can explain in own words ("the argument assumes correlation means causation")
+3-Apply: student applies the concept to the specific question ("here the author assumes that because revenue rose after the campaign, the campaign caused it")
+4-Analyze: student breaks down the logical structure ("the premise is X, the conclusion is Y, the gap is the unstated assumption that Z")
+5-Evaluate: student judges the argument quality ("this is a weak argument because it ignores alternative explanations like seasonal trends")
+6-Create: student generates counterexamples or new arguments ("a better study would control for other variables like price changes")
+
+Output strict JSON:
+{{
+  "level": <integer 1-6>,
+  "reasoning": "<one sentence explaining your classification>"
+}}
+
+Output JSON only."""),
+        ])
+
     # ---------- 核心方法 ----------
 
     def diagnose_error(
@@ -192,9 +224,10 @@ Output JSON only."""),
         error_type: str,
         hint_count: int,
         chat_history: Optional[List[Dict[str, str]]] = None,
+        blooms_level: Optional[int] = None,
     ) -> str:
         """
-        生成苏格拉底式提示，强度随 hint_count 递增
+        生成苏格拉底式提示，强度随 hint_count 递增，并根据 Bloom's level 调整策略
 
         Args:
             question: 完整题目字典
@@ -203,28 +236,52 @@ Output JSON only."""),
             error_type: 错误类型
             hint_count: 当前是第几次提示 (0-based → 显示为 1-based)
             chat_history: 对话历史
+            blooms_level: 学生当前 Bloom's 层级 (1-6)，用于调整策略
 
         Returns:
             提示文本字符串
         """
-        # 根据 hint_count 调整提示强度
+        # 根据 hint_count 调整基础提示强度
         hint_number = hint_count + 1  # 1-based for display
+
+        # Bloom's level 调整策略
+        blooms_adjustment = ""
+        if blooms_level is not None:
+            if blooms_level <= 2:
+                # Remember/Understand → 更多脚手架
+                blooms_adjustment = (
+                    " The student is at a basic cognitive level (Remember/Understand). "
+                    "Provide more scaffolding: break the problem into smaller steps, "
+                    "define key terms, and ask simpler questions."
+                )
+            elif blooms_level <= 4:
+                # Apply/Analyze → 推动分析
+                blooms_adjustment = (
+                    " The student shows some analytical ability (Apply/Analyze). "
+                    "Push them toward deeper analysis: ask them to identify the premise, "
+                    "conclusion, and the gap between them."
+                )
+            # 5-6 (Evaluate/Create) → 不需要额外调整，会在 /continue 中触发结束
+
         if hint_number == 1:
             strength = (
                 "Hint #1 (gentle): Ask a broad, open-ended question that nudges the student "
                 "to re-examine the argument's structure. Do NOT mention the specific flaw directly."
+                + blooms_adjustment
             )
         elif hint_number == 2:
             strength = (
                 "Hint #2 (moderate): Point toward the specific area where the logic breaks down. "
                 "You may reference the type of reasoning error (e.g., 'Have you considered whether "
                 "this is a causal claim?') but do NOT name the correct answer."
+                + blooms_adjustment
             )
         else:
             strength = (
                 "Hint #3 (direct): Clearly describe the logical flaw and ask the student to "
                 "reconsider which option addresses it. Be specific about the assumption gap. "
                 "Still do NOT reveal the correct answer letter."
+                + blooms_adjustment
             )
 
         # 格式化对话历史
@@ -260,15 +317,18 @@ Output JSON only."""),
             else:
                 return "Consider whether your chosen option truly addresses the core logical gap in the argument."
 
-    def evaluate_understanding(
+    def evaluate_blooms_level(
         self,
         student_response: str,
         logic_gap: str,
         key_assumption: str,
         chat_history: Optional[List[Dict[str, str]]] = None,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """
-        评估学生的理解程度
+        使用 Bloom's Taxonomy 评估学生认知水平。
+
+        6 个层级：
+        1-Remember, 2-Understand, 3-Apply, 4-Analyze, 5-Evaluate, 6-Create
 
         Args:
             student_response: 学生最新回复
@@ -277,9 +337,19 @@ Output JSON only."""),
             chat_history: 对话历史
 
         Returns:
-            {"understanding": "confused|partial|clear", "reasoning": str}
+            {
+                "level": int (1-6),
+                "level_name": str,
+                "reasoning": str,
+                "mapped_understanding": str  ("confused"|"partial"|"clear")
+            }
         """
-        default = {"understanding": "confused", "reasoning": "Unable to evaluate."}
+        default = {
+            "level": 1,
+            "level_name": "Remember",
+            "reasoning": "Unable to evaluate.",
+            "mapped_understanding": "confused",
+        }
 
         history_text = ""
         if chat_history:
@@ -290,7 +360,7 @@ Output JSON only."""),
             history_text = "(no prior conversation)"
 
         try:
-            chain = self.understanding_prompt | self.llm | self.str_parser
+            chain = self.blooms_prompt | self.llm | self.str_parser
             raw = chain.invoke({
                 "logic_gap": logic_gap,
                 "key_assumption": key_assumption,
@@ -298,16 +368,60 @@ Output JSON only."""),
                 "chat_history_text": history_text,
             })
             result = _extract_json(raw)
-            # 校验 understanding 值
-            if result.get("understanding") not in ("confused", "partial", "clear"):
-                result["understanding"] = "confused"
-            if "reasoning" not in result:
-                result["reasoning"] = ""
-            return result
+
+            level = int(result.get("level", 1))
+            level = max(1, min(6, level))
+
+            level_names = {
+                1: "Remember", 2: "Understand", 3: "Apply",
+                4: "Analyze", 5: "Evaluate", 6: "Create",
+            }
+            level_name = level_names.get(level, "Remember")
+
+            # 映射到旧的三级制（向后兼容）
+            if level <= 2:
+                mapped = "confused"
+            elif level <= 4:
+                mapped = "partial"
+            else:
+                mapped = "clear"
+
+            return {
+                "level": level,
+                "level_name": level_name,
+                "reasoning": result.get("reasoning", ""),
+                "mapped_understanding": mapped,
+            }
 
         except Exception as e:
-            logger.warning("evaluate_understanding failed: %s", e)
+            logger.warning("evaluate_blooms_level failed: %s", e)
             return default
+
+    def evaluate_understanding(
+        self,
+        student_response: str,
+        logic_gap: str,
+        key_assumption: str,
+        chat_history: Optional[List[Dict[str, str]]] = None,
+    ) -> Dict[str, str]:
+        """
+        评估学生的理解程度（向后兼容接口）。
+
+        内部调用 evaluate_blooms_level() 并映射到 confused/partial/clear。
+
+        Returns:
+            {"understanding": "confused|partial|clear", "reasoning": str}
+        """
+        blooms = self.evaluate_blooms_level(
+            student_response=student_response,
+            logic_gap=logic_gap,
+            key_assumption=key_assumption,
+            chat_history=chat_history,
+        )
+        return {
+            "understanding": blooms["mapped_understanding"],
+            "reasoning": blooms["reasoning"],
+        }
 
     def generate_conclusion(
         self,
