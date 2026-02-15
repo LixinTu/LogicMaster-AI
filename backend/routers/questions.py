@@ -125,6 +125,9 @@ def get_next_question(req: NextQuestionRequest):
 class BanditUpdateRequest(BaseModel):
     question_id: str = Field(..., description="题目 ID")
     is_correct: bool = Field(..., description="是否答对")
+    skills: List[str] = Field(default_factory=list, description="涉及的技能列表（DKT 用）")
+    theta_at_time: Optional[float] = Field(None, description="答题时的能力值")
+    user_id: str = Field("default", description="用户标识")
 
 
 class BanditUpdateResponse(BaseModel):
@@ -147,6 +150,18 @@ def update_bandit_stats(req: BanditUpdateRequest):
         sr_model.update_half_life(question_id=req.question_id, is_correct=req.is_correct)
     except Exception:
         pass  # 间隔重复更新失败时静默降级
+    # 记录答题历史（DKT 训练数据）
+    try:
+        if req.skills:
+            _db_manager.insert_answer_history(
+                question_id=req.question_id,
+                skill_ids=req.skills,
+                is_correct=req.is_correct,
+                theta_at_time=req.theta_at_time,
+                user_id=req.user_id,
+            )
+    except Exception:
+        pass  # 答题历史记录失败时静默降级
     return BanditUpdateResponse(status="ok", question_id=req.question_id)
 
 

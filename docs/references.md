@@ -24,6 +24,34 @@ Corbett & Anderson's BKT tracks per-skill mastery as a hidden variable updated a
 
 Clement et al. applied Thompson Sampling to the problem of selecting learning activities for students, showing it outperforms random and expert-designed curricula. Our `engine/bandit_selector.py` implements their approach: each question maintains a Beta(α, β) distribution tracking correct/incorrect responses. At selection time, we sample from each question's Beta distribution (explore) and compute 3PL item information (exploit), combining them as `(1-w)*exploit + w*explore` with configurable weight w=0.3. After each student response, α (correct) or β (incorrect) is incremented, sharpening the posterior for future selections.
 
+## DKT (Deep Knowledge Tracing)
+
+**Piech, C., Bassen, J., Huang, J., Ganguli, S., Sahami, M., Guibas, L. J. & Sohl-Dickstein, J. (2015).** Deep Knowledge Tracing. *Advances in Neural Information Processing Systems (NeurIPS)*, 28.
+
+Piech et al. replaced BKT's discrete Hidden Markov Model with an LSTM recurrent neural network that learns to predict student performance from raw interaction sequences, capturing complex temporal dependencies. Our `engine/dkt_model.py` implements `DKTModelLSTM` with architecture LSTM(input_size=2K, hidden_size=64, num_layers=1) → Linear(K) → Sigmoid, where K is the number of skills and the 2K input encodes correct/incorrect channels per skill. The model is trained with Adam optimizer, binary cross-entropy loss, and early stopping (patience=5 on validation loss). The system auto-selects via `get_dkt_model()`: LSTM when PyTorch is available AND >= 50 interactions exist, otherwise falls back to `DKTModelNumpy` — a windowed logistic regression that provides reasonable predictions during cold start. Both models share the `predict_mastery(history) → Dict[str, float]` interface, enabling transparent upgrades as data accumulates.
+
+## Spaced Repetition (Half-Life Regression)
+
+**Settles, B. & Meeder, B. (2016).** A Trainable Spaced Repetition Model for Language Learning. *Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (ACL)*, 1848-1858.
+
+Developed at Duolingo, Settles & Meeder model forgetting as an exponential decay parameterized by a per-learner-item half-life. Our `engine/spaced_repetition.py` implements the Ebbinghaus forgetting curve P(recall) = 2^(-Δt/h), where the half-life h doubles on correct responses and halves on incorrect ones (clamped to [0.5, 365] days). The recommender (`engine/recommender.py`) queries review candidates with P(recall) < 0.5 and injects them into the recommendation pipeline with 40% probability, balancing new learning with retention maintenance.
+
+## Bloom's Taxonomy
+
+**Bloom, B. S. (ed.) (1956).** *Taxonomy of Educational Objectives: The Classification of Educational Goals. Handbook I: Cognitive Domain.* David McKay Company.
+
+Bloom's original taxonomy defined 6 levels of cognitive complexity: Knowledge, Comprehension, Application, Analysis, Synthesis, Evaluation. This hierarchical framework provides the theoretical basis for our cognitive level assessment.
+
+**Anderson, L. W. & Krathwohl, D. R. (eds.) (2001).** *A Taxonomy for Learning, Teaching, and Assessing: A Revision of Bloom's Taxonomy of Educational Objectives.* Longman.
+
+Anderson & Krathwohl revised the taxonomy to: Remember, Understand, Apply, Analyze, Evaluate, Create. Our `backend/services/tutor_agent.py` uses this 6-level framework in `evaluate_blooms_level()`, prompting the LLM to classify student responses into cognitive levels with structured reasoning. The classification maps to hint strategies: levels 1-2 (Remember/Understand) trigger additional scaffolding, levels 3-4 (Apply/Analyze) push analytical thinking, and levels 5-6 (Evaluate/Create) lead toward conclusion. Bloom's progression is tracked per conversation via `blooms_history` in the conversation manager.
+
+## Scaffolding
+
+**Wood, D., Bruner, J. S. & Ross, G. (1976).** The role of tutoring in problem solving. *Journal of Child Psychology and Psychiatry*, 17(2), 89-100.
+
+Wood, Bruner & Ross introduced scaffolding: structured support that an expert provides and gradually withdraws as the learner gains competence. Our progressive hint system directly implements this principle — hint #1 is gentle (minimal guidance), hint #2 is moderate (more explicit), hint #3 is direct (near-reveal). Combined with Bloom's Taxonomy evaluation, the scaffold intensity is dynamically adjusted: students at low cognitive levels receive stronger structural support, while those demonstrating higher-order thinking receive prompts that push further analysis.
+
 ## Socratic Tutoring
 
 **Bloom, B. S. (1984).** The 2 sigma problem: The search for methods of group instruction as effective as one-to-one tutoring. *Educational Researcher*, 13(6), 4-16.

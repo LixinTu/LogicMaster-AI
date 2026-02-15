@@ -107,6 +107,23 @@ class DatabaseManager:
                     )
                 """)
 
+                # DKT 答题历史表（Deep Knowledge Tracing）
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS answer_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT NOT NULL DEFAULT 'default',
+                        question_id TEXT NOT NULL,
+                        skill_ids TEXT NOT NULL,
+                        is_correct INTEGER NOT NULL,
+                        theta_at_time REAL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_answer_history_user_time
+                    ON answer_history (user_id, created_at)
+                """)
+
                 # 3PL IRT 参数列（向后兼容：仅在列不存在时添加）
                 existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(questions)").fetchall()}
                 if "discrimination" not in existing_cols:
@@ -447,6 +464,127 @@ class DatabaseManager:
         
         return []
 
+
+    # ========== DKT: answer_history ==========
+
+    def insert_answer_history(
+        self,
+        question_id: str,
+        skill_ids: List[str],
+        is_correct: bool,
+        theta_at_time: Optional[float] = None,
+        user_id: str = "default",
+    ) -> bool:
+        """
+        插入一条答题历史记录（供 DKT 训练使用）
+
+        Args:
+            question_id: 题目 ID
+            skill_ids: 涉及的技能列表
+            is_correct: 是否答对
+            theta_at_time: 答题时的能力值
+            user_id: 用户标识
+
+        Returns:
+            成功返回 True
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            skill_json = json.dumps(skill_ids, ensure_ascii=False)
+            cursor.execute("""
+                INSERT INTO answer_history
+                    (user_id, question_id, skill_ids, is_correct, theta_at_time)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, question_id, skill_json, 1 if is_correct else 0, theta_at_time))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"insert_answer_history failed: {e}")
+            return False
+
+    def query_answer_history(
+        self,
+        user_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        查询答题历史（按 created_at 升序）
+
+        Args:
+            user_id: 指定用户，None 返回所有
+            limit: 最大返回数量
+
+        Returns:
+            记录字典列表，skill_ids 已解析为 list
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            if user_id:
+                query = "SELECT * FROM answer_history WHERE user_id = ? ORDER BY created_at ASC"
+                params: tuple = (user_id,)
+            else:
+                query = "SELECT * FROM answer_history ORDER BY created_at ASC"
+                params = ()
+
+            if limit:
+                query += f" LIMIT {int(limit)}"
+
+            cursor.execute(query, params)
+            rows = []
+            for row in cursor.fetchall():
+                d = dict(row)
+                # 解析 skill_ids JSON
+                try:
+                    d["skill_ids"] = json.loads(d["skill_ids"])
+                except (json.JSONDecodeError, TypeError):
+                    d["skill_ids"] = []
+                rows.append(d)
+            conn.close()
+            return rows
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"query_answer_history failed: {e}")
+            return []
+
+    def count_answer_history(self, user_id: Optional[str] = None) -> int:
+        """
+        统计答题历史总数
+
+        Args:
+            user_id: 指定用户，None 返回全部
+
+        Returns:
+            记录数
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            if user_id:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM answer_history WHERE user_id = ?",
+                    (user_id,),
+                )
+            else:
+                cursor.execute("SELECT COUNT(*) FROM answer_history")
+            count = cursor.fetchone()[0]
+            conn.close()
+            return count
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"count_answer_history failed: {e}")
+            return 0
 
     # ========== A/B Testing: experiment_logs ==========
 

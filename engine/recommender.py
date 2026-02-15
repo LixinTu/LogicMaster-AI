@@ -125,6 +125,7 @@ def generate_next_question(
     db_manager: Optional[DatabaseManager] = None,
     use_bandit: bool = True,
     use_spaced_repetition: bool = True,
+    use_dkt: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """
     使用 IRT + BKT 混合推荐算法选择下一题
@@ -187,6 +188,16 @@ def generate_next_question(
         # 计算短板：遍历 questions_log，找出错误率最高的 3 个技能
         weak_skills: List[str] = analyze_weak_skills(questions_log)
 
+        # DKT 技能掌握度（可选）
+        dkt_mastery: Optional[Dict[str, float]] = None
+        if use_dkt:
+            try:
+                from engine.dkt_model import get_dkt_model
+                dkt_model = get_dkt_model()
+                dkt_mastery = dkt_model.predict_mastery(questions_log)
+            except Exception:
+                dkt_mastery = None  # DKT 失败时降级到 BKT
+
         # 弱项技能加分：优先包含短板技能的候选题目
         scored_candidates: List[tuple] = []
         for candidate in filtered_candidates:
@@ -199,13 +210,19 @@ def generate_next_question(
             base_score: float = 1.0 - difficulty_diff
             score += base_score
 
-            # 加分项：如果题目含短板技能，+0.5
             candidate_skills: List[str] = candidate.get("skills", [])
             if isinstance(candidate_skills, list):
-                for skill in candidate_skills:
-                    if skill in weak_skills:
-                        score += 0.5
-                        break
+                if dkt_mastery is not None:
+                    # DKT：连续技能加分 = (1.0 - mastery) * 0.5
+                    for skill in candidate_skills:
+                        mastery = dkt_mastery.get(skill, 0.5)
+                        score += (1.0 - mastery) * 0.5
+                else:
+                    # BKT 回退：如果题目含短板技能，+0.5
+                    for skill in candidate_skills:
+                        if skill in weak_skills:
+                            score += 0.5
+                            break
 
             scored_candidates.append((candidate, score))
 

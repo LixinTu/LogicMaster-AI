@@ -104,6 +104,82 @@ Get the next adaptively recommended question. Uses IRT + BKT hybrid recommendati
 
 **Error (404):** No suitable question found.
 
+### POST /api/questions/bandit-update
+
+Update bandit statistics and record answer history after a student response. Updates Thompson Sampling Beta priors, spaced repetition half-life, and (optionally) DKT training data.
+
+**Request:**
+```json
+{
+  "question_id": "q015",
+  "is_correct": true,
+  "skills": ["Causal Reasoning", "Alternative Explanations"],
+  "theta_at_time": 0.62,
+  "user_id": "default"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `question_id` | string | Yes | Question ID |
+| `is_correct` | bool | Yes | Whether the answer was correct |
+| `skills` | array | No | Skills involved (logged to `answer_history` for DKT training) |
+| `theta_at_time` | float | No | Student's theta at time of answer |
+| `user_id` | string | No | User identifier (default: `"default"`) |
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "question_id": "q015"
+}
+```
+
+**Side effects:**
+- Updates Thompson Sampling Beta(α, β) priors for the question
+- Updates spaced repetition half-life for the question
+- If `skills` is non-empty, inserts a row into `answer_history` (DKT training data)
+
+### GET /api/questions/review-schedule
+
+Get questions due for review based on Half-Life Regression forgetting curve. Returns items where estimated recall probability has dropped below the threshold.
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `user_id` | string | `default` | User identifier |
+| `threshold` | float | `0.5` | Recall probability threshold |
+
+**Response:**
+```json
+{
+  "user_id": "default",
+  "threshold": 0.5,
+  "due_count": 3,
+  "reviews": [
+    {
+      "question_id": "q007",
+      "recall_probability": 0.31,
+      "half_life": 2.0,
+      "elapsed_days": 3.5
+    },
+    {
+      "question_id": "q012",
+      "recall_probability": 0.42,
+      "half_life": 1.5,
+      "elapsed_days": 1.8
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `recall_probability` | float | Estimated P(recall) = 2^(-elapsed/half_life) |
+| `half_life` | float | Current half-life in days (doubles on correct, halves on incorrect) |
+| `elapsed_days` | float | Days since last practice |
+
 ---
 
 ## Tutor Router (`/api/tutor`)

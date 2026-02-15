@@ -10,6 +10,8 @@
 
 - Built conversation state manager supporting concurrent sessions with UUID-based tracking, TTL-based cleanup, and graceful degradation to stateless fallback on agent failure
 
+- Integrated Bloom's Taxonomy cognitive evaluation into Socratic tutor, using LLM-based 6-level classification (Remember → Create) to dynamically scaffold hint strategies: low-level adds foundational scaffolding, mid-level pushes analytical thinking, with per-turn progression tracking
+
 - Evaluated LLM-generated explanations using GPT-4-as-judge methodology with 4-criteria rubric (correctness, clarity, completeness, pedagogical value), establishing automated quality baseline
 
 ## For DA/DS Positions
@@ -22,17 +24,21 @@
 
 - Built Thompson Sampling bandit for adaptive question selection, maintaining per-question Beta(α, β) priors updated after each student response; combined score balances 3PL item information (exploit) with Beta-sampled uncertainty (explore), with configurable explore weight for A/B comparison against legacy weighted-sort baseline
 
+- Implemented Deep Knowledge Tracing (Piech et al. 2015) with PyTorch LSTM predicting per-skill mastery from temporal interaction sequences; runtime auto-selects between LSTM (>= 50 interactions) and numpy windowed logistic regression (cold-start fallback), with 80/20 user-level train/val split and early stopping
+
+- Built spaced repetition engine using Half-Life Regression (Settles & Meeder 2016, Duolingo) modeling per-item forgetting curves with Ebbinghaus exponential decay; review candidates with recall probability < 0.5 are probabilistically injected into the recommendation pipeline
+
 - Designed retrieval evaluation framework computing Precision@K, Recall@K, MRR, and F1@K metrics for the RAG system; automated quality assessment using LLM-as-judge with structured scoring rubrics
 
 - Built real-time analytics API endpoints aggregating A/B test results and RAG performance metrics, with Streamlit dashboard visualizing experiment outcomes and system health indicators
 
 ## Technical Skills Section
 
-**Languages**: Python (FastAPI, LangChain, SQLAlchemy, Pandas, NumPy, SciPy)
-**AI/ML**: OpenAI API, LangChain, RAG Systems (Qdrant + Embeddings), Prompt Engineering
+**Languages**: Python (FastAPI, LangChain, SQLAlchemy, Pandas, NumPy, SciPy, PyTorch)
+**AI/ML**: Deep Knowledge Tracing (LSTM), OpenAI API, LangChain, RAG Systems (Qdrant + Embeddings), Prompt Engineering
 **Databases**: SQLite, Qdrant (Vector DB)
-**Data Science**: Hypothesis Testing (t-tests, Cohen's d), A/B Testing, IRT (3PL), Thompson Sampling, Bayesian Knowledge Tracing, MLE Optimization (L-BFGS-B)
-**Tools**: Docker, Docker Compose, Git, pytest (128 test cases)
+**Data Science**: Hypothesis Testing (t-tests, Cohen's d), A/B Testing, IRT (3PL), Thompson Sampling, Deep Knowledge Tracing, Half-Life Regression, Bloom's Taxonomy, MLE Optimization (L-BFGS-B)
+**Tools**: Docker, Docker Compose, Git, pytest (202 test cases)
 **Visualization**: Plotly, Matplotlib, Streamlit
 
 ## Project Link
