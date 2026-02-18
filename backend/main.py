@@ -37,10 +37,15 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS: 允许 Streamlit (localhost:8501) 访问
+# CORS: 允许前端应用访问
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8501", "http://127.0.0.1:8501"],
+    allow_origins=[
+        "http://localhost:8501",
+        "http://127.0.0.1:8501",
+        "http://localhost:8080",
+        "http://localhost:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
