@@ -47,6 +47,20 @@ class Settings(BaseSettings):
         },
     }
 
+    # JWT 认证
+    JWT_SECRET_KEY: str = "glitchmind-secret-key-change-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_DAYS: int = 7
+
+    # SMTP 邮件（可选，留空则不发送邮件）
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_EMAIL: str = ""
+    SMTP_PASSWORD: str = ""
+
+    # 默认每日目标题数
+    DAILY_QUESTION_GOAL: int = 5
+
     # 应用配置
     APP_ENV: str = "development"
     DEBUG: bool = True

@@ -30,6 +30,10 @@ from backend.routers.questions import router as questions_router
 from backend.routers.tutor import router as tutor_router
 from backend.routers.explanations import router as explanations_router
 from backend.routers.analytics import router as analytics_router
+from backend.routers.auth import router as auth_router
+from backend.routers.dashboard import router as dashboard_router
+from backend.routers.bookmarks import router as bookmarks_router
+from backend.routers.goals import router as goals_router
 
 app = FastAPI(
     title="LogicMaster AI API",
@@ -54,6 +58,10 @@ app.add_middleware(
 
 # ---------- 注册路由 ----------
 
+app.include_router(auth_router)
+app.include_router(dashboard_router)
+app.include_router(bookmarks_router)
+app.include_router(goals_router)
 app.include_router(theta_router)
 app.include_router(questions_router)
 app.include_router(tutor_router)

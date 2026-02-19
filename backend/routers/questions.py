@@ -162,6 +162,16 @@ def update_bandit_stats(req: BanditUpdateRequest):
             )
     except Exception:
         pass  # 答题历史记录失败时静默降级
+    # 自动添加错题书签（答错时）
+    if not req.is_correct:
+        try:
+            _db_manager.insert_bookmark(
+                user_id=req.user_id,
+                question_id=req.question_id,
+                bookmark_type="wrong",
+            )
+        except Exception:
+            pass  # 书签写入失败时静默降级
     return BanditUpdateResponse(status="ok", question_id=req.question_id)
 
 

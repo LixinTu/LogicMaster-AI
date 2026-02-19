@@ -107,6 +107,21 @@ class DatabaseManager:
                     )
                 """)
 
+                # 用户账户表（Auth）
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        id TEXT PRIMARY KEY,
+                        email TEXT UNIQUE NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        display_name TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_users_email
+                    ON users (email)
+                """)
+
                 # DKT 答题历史表（Deep Knowledge Tracing）
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS answer_history (
@@ -122,6 +137,46 @@ class DatabaseManager:
                 cursor.execute("""
                     CREATE INDEX IF NOT EXISTS idx_answer_history_user_time
                     ON answer_history (user_id, created_at)
+                """)
+
+                # 收藏/错题本表（Bookmarks）
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS bookmarks (
+                        user_id TEXT NOT NULL,
+                        question_id TEXT NOT NULL,
+                        bookmark_type TEXT NOT NULL CHECK(bookmark_type IN ('favorite', 'wrong')),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (user_id, question_id, bookmark_type)
+                    )
+                """)
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_bookmarks_user_type
+                    ON bookmarks (user_id, bookmark_type)
+                """)
+
+                # 学习目标表（Learning Goals）
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS learning_goals (
+                        user_id TEXT PRIMARY KEY,
+                        target_gmat_score INTEGER DEFAULT 40,
+                        daily_question_goal INTEGER DEFAULT 5,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                # 邮件发送日志表（Email Logs）
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS email_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT NOT NULL,
+                        email_type TEXT NOT NULL,
+                        sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_email_logs_user
+                    ON email_logs (user_id, sent_at)
                 """)
 
                 # 3PL IRT 参数列（向后兼容：仅在列不存在时添加）
@@ -711,6 +766,746 @@ class DatabaseManager:
                 conn.close()
             print(f"query_logs_by_user failed: {e}")
             return []
+
+
+    # ========== Dashboard: answer_history 统计 ==========
+
+    def count_today_answers(self, user_id: str = "default") -> int:
+        """
+        统计用户今天的答题数量（按 UTC 日期）
+
+        Returns:
+            今日答题总数
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM answer_history WHERE user_id = ? AND DATE(created_at) = DATE('now')",
+                (user_id,),
+            )
+            count = cursor.fetchone()[0]
+            conn.close()
+            return count
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"count_today_answers failed: {e}")
+            return 0
+
+    def calculate_streak(self, user_id: str = "default") -> int:
+        """
+        计算用户连续答题天数（从今天往前，每天至少1题）
+
+        Returns:
+            连续天数。若今天无记录，从昨天开始往前数（允许当天未答题）
+        """
+        from datetime import datetime, timedelta, timezone
+
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT DISTINCT DATE(created_at) as practice_date
+                   FROM answer_history WHERE user_id = ?
+                   ORDER BY practice_date DESC""",
+                (user_id,),
+            )
+            dates = {row[0] for row in cursor.fetchall()}
+            conn.close()
+
+            if not dates:
+                return 0
+
+            # Use UTC date to match DATE(created_at) which extracts from stored +00:00 timestamps
+            today = datetime.now(timezone.utc).date()
+            streak = 0
+            # Start from today; if today has no record, check if yesterday starts a streak
+            check_day = today
+            if today.isoformat() not in dates:
+                check_day = today - timedelta(days=1)
+
+            while check_day.isoformat() in dates:
+                streak += 1
+                check_day -= timedelta(days=1)
+            return streak
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"calculate_streak failed: {e}")
+            return 0
+
+    def get_skill_error_rates(
+        self, user_id: str = "default", limit: int = 3
+    ) -> List[Dict[str, Any]]:
+        """
+        按技能计算错误率，返回最弱的技能列表（用于 Dashboard weak_skills）。
+        使用 SQLite json_each 展开 skill_ids JSON 数组。
+
+        Returns:
+            [{"skill_name": str, "error_rate": float, "mastery": float}]
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT je.value AS skill_name,
+                          COUNT(*) AS total,
+                          SUM(CASE WHEN ah.is_correct = 0 THEN 1 ELSE 0 END) AS wrong_count
+                   FROM answer_history ah, json_each(ah.skill_ids) je
+                   WHERE ah.user_id = ?
+                   GROUP BY je.value
+                   HAVING total > 0
+                   ORDER BY (wrong_count * 1.0 / total) DESC
+                   LIMIT ?""",
+                (user_id, limit),
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            result = []
+            for skill_name, total, wrong_count in rows:
+                error_rate = wrong_count / total if total > 0 else 0.0
+                result.append({
+                    "skill_name": skill_name,
+                    "error_rate": round(error_rate, 3),
+                    "mastery": round(1.0 - error_rate, 3),
+                })
+            return result
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"get_skill_error_rates failed: {e}")
+            return []
+
+    def get_latest_theta(self, user_id: str = "default") -> Optional[float]:
+        """
+        从 answer_history 获取用户最新的 theta 值
+
+        Returns:
+            最新 theta，若无记录返回 None
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT theta_at_time FROM answer_history
+                   WHERE user_id = ? AND theta_at_time IS NOT NULL
+                   ORDER BY created_at DESC LIMIT 1""",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return row[0] if row else None
+        except Exception as e:
+            if conn:
+                conn.close()
+            return None
+
+    def get_last_practiced_time(self, user_id: str = "default") -> Optional[str]:
+        """
+        获取用户最后一次答题的时间戳
+
+        Returns:
+            ISO 格式时间字符串，或 None
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT MAX(created_at) FROM answer_history WHERE user_id = ?",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return row[0] if row and row[0] else None
+        except Exception as e:
+            if conn:
+                conn.close()
+            return None
+
+    # ========== Bookmarks: 收藏/错题本 ==========
+
+    def insert_bookmark(
+        self, user_id: str, question_id: str, bookmark_type: str
+    ) -> bool:
+        """
+        添加书签（收藏或错题）。重复插入静默忽略（INSERT OR IGNORE）。
+
+        Args:
+            user_id: 用户标识
+            question_id: 题目 ID
+            bookmark_type: "favorite" 或 "wrong"
+
+        Returns:
+            成功（含已存在）返回 True
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn.execute(
+                """INSERT OR IGNORE INTO bookmarks (user_id, question_id, bookmark_type)
+                   VALUES (?, ?, ?)""",
+                (user_id, question_id, bookmark_type),
+            )
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"insert_bookmark failed: {e}")
+            return False
+
+    def remove_bookmark(
+        self, user_id: str, question_id: str, bookmark_type: str
+    ) -> bool:
+        """
+        删除书签
+
+        Returns:
+            成功返回 True
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn.execute(
+                """DELETE FROM bookmarks WHERE user_id = ? AND question_id = ? AND bookmark_type = ?""",
+                (user_id, question_id, bookmark_type),
+            )
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"remove_bookmark failed: {e}")
+            return False
+
+    def query_bookmarks(
+        self,
+        user_id: str,
+        bookmark_type: Optional[str] = None,
+        skill_filter: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        查询用户书签，JOIN questions 获取题目内容
+
+        Args:
+            user_id: 用户标识
+            bookmark_type: 可选过滤 "favorite" 或 "wrong"
+            skill_filter: 可选技能名过滤（如 "Causal Reasoning"）
+
+        Returns:
+            书签列表，含 stimulus_preview 和 skills
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            query = """
+                SELECT b.question_id, b.bookmark_type, b.created_at,
+                       q.question_type, q.difficulty, q.content
+                FROM bookmarks b
+                LEFT JOIN questions q ON b.question_id = q.id
+                WHERE b.user_id = ?
+            """
+            params: List[Any] = [user_id]
+            if bookmark_type:
+                query += " AND b.bookmark_type = ?"
+                params.append(bookmark_type)
+            query += " ORDER BY b.created_at DESC"
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            conn.close()
+
+            result = []
+            for row in rows:
+                content: Dict[str, Any] = {}
+                try:
+                    if row["content"]:
+                        content = json.loads(row["content"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+                skills: List[str] = content.get("skills", [])
+                if skill_filter and skill_filter not in skills:
+                    continue
+
+                stimulus = content.get("stimulus", "")
+                preview = stimulus[:150] + "..." if len(stimulus) > 150 else stimulus
+
+                result.append({
+                    "question_id": row["question_id"],
+                    "question_type": row["question_type"] or "",
+                    "difficulty": row["difficulty"] or "",
+                    "stimulus_preview": preview,
+                    "skills": skills,
+                    "bookmark_type": row["bookmark_type"],
+                    "created_at": row["created_at"],
+                })
+            return result
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"query_bookmarks failed: {e}")
+            return []
+
+    def get_wrong_stats(self, user_id: str) -> Dict[str, Any]:
+        """
+        统计错题本分布：按技能和题型
+
+        Returns:
+            {"total_wrong": int, "by_skill": [...], "by_type": [...]}
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+
+            # 总错题数
+            cursor.execute(
+                "SELECT COUNT(*) FROM bookmarks WHERE user_id = ? AND bookmark_type = 'wrong'",
+                (user_id,),
+            )
+            total_wrong: int = cursor.fetchone()[0]
+
+            # 按题型统计（JOIN questions）
+            cursor.execute(
+                """SELECT q.question_type, COUNT(*) as cnt
+                   FROM bookmarks b
+                   LEFT JOIN questions q ON b.question_id = q.id
+                   WHERE b.user_id = ? AND b.bookmark_type = 'wrong'
+                   GROUP BY q.question_type
+                   ORDER BY cnt DESC""",
+                (user_id,),
+            )
+            by_type = [
+                {"question_type": t or "Unknown", "count": c}
+                for t, c in cursor.fetchall()
+            ]
+
+            # 按技能统计（从 questions.content JSON 解析）
+            cursor.execute(
+                """SELECT q.content FROM bookmarks b
+                   LEFT JOIN questions q ON b.question_id = q.id
+                   WHERE b.user_id = ? AND b.bookmark_type = 'wrong'""",
+                (user_id,),
+            )
+            skill_counts: Dict[str, int] = {}
+            for (content_json,) in cursor.fetchall():
+                try:
+                    if content_json:
+                        skills = json.loads(content_json).get("skills", [])
+                        for skill in skills:
+                            skill_counts[skill] = skill_counts.get(skill, 0) + 1
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            conn.close()
+            by_skill = sorted(
+                [{"skill_name": k, "count": v} for k, v in skill_counts.items()],
+                key=lambda x: -x["count"],
+            )
+            return {"total_wrong": total_wrong, "by_skill": by_skill, "by_type": by_type}
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"get_wrong_stats failed: {e}")
+            return {"total_wrong": 0, "by_skill": [], "by_type": []}
+
+    # ========== Learning Goals: 学习目标 ==========
+
+    def upsert_learning_goal(
+        self,
+        user_id: str,
+        target_gmat_score: int,
+        daily_question_goal: int,
+    ) -> bool:
+        """
+        插入或更新用户学习目标（UPSERT）
+
+        Returns:
+            成功返回 True
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn.execute(
+                """INSERT INTO learning_goals (user_id, target_gmat_score, daily_question_goal, created_at, updated_at)
+                   VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                   ON CONFLICT(user_id) DO UPDATE SET
+                       target_gmat_score = excluded.target_gmat_score,
+                       daily_question_goal = excluded.daily_question_goal,
+                       updated_at = CURRENT_TIMESTAMP""",
+                (user_id, target_gmat_score, daily_question_goal),
+            )
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"upsert_learning_goal failed: {e}")
+            return False
+
+    def get_learning_goal(self, user_id: str) -> Dict[str, Any]:
+        """
+        获取用户学习目标。若无记录，返回默认值。
+
+        Returns:
+            {"target_gmat_score": int, "daily_question_goal": int, "updated_at": str}
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT target_gmat_score, daily_question_goal, updated_at FROM learning_goals WHERE user_id = ?",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                return dict(row)
+            # 默认值
+            return {"target_gmat_score": 40, "daily_question_goal": 5, "updated_at": None}
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"get_learning_goal failed: {e}")
+            return {"target_gmat_score": 40, "daily_question_goal": 5, "updated_at": None}
+
+    # ========== Email Logs: 邮件发送日志 ==========
+
+    def insert_email_log(self, user_id: str, email_type: str) -> bool:
+        """
+        记录一次邮件发送
+
+        Args:
+            user_id: 用户标识
+            email_type: 邮件类型（如 "review_reminder"）
+
+        Returns:
+            成功返回 True
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn.execute(
+                "INSERT INTO email_logs (user_id, email_type) VALUES (?, ?)",
+                (user_id, email_type),
+            )
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"insert_email_log failed: {e}")
+            return False
+
+    def get_last_reminder_time(self, user_id: str) -> Optional[str]:
+        """
+        获取用户最近一次 review_reminder 的发送时间
+
+        Returns:
+            ISO 格式时间字符串，或 None（从未发送过）
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT MAX(sent_at) FROM email_logs
+                   WHERE user_id = ? AND email_type = 'review_reminder'""",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return row[0] if row and row[0] else None
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"get_last_reminder_time failed: {e}")
+            return None
+
+    # ========== Auth: users ==========
+
+    def insert_user(
+        self,
+        user_id: str,
+        email: str,
+        password_hash: str,
+        display_name: Optional[str] = None,
+    ) -> bool:
+        """
+        插入新用户记录
+
+        Returns:
+            成功返回 True；email 已存在返回 False
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO users (id, email, password_hash, display_name)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, email.lower().strip(), password_hash, display_name))
+            conn.commit()
+            conn.close()
+            return True
+        except sqlite3.IntegrityError:
+            if conn:
+                conn.close()
+            return False
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"insert_user failed: {e}")
+            return False
+
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """
+        按 email 查询用户
+
+        Returns:
+            用户字典，或 None（不存在时）
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, email, password_hash, display_name, created_at FROM users WHERE email = ?",
+                (email.lower().strip(),),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return dict(row) if row else None
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"get_user_by_email failed: {e}")
+            return None
+
+    def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """
+        按 ID 查询用户
+
+        Returns:
+            用户字典（不含 password_hash），或 None
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, email, display_name, created_at FROM users WHERE id = ?",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return dict(row) if row else None
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"get_user_by_id failed: {e}")
+            return None
+
+    def update_user_display_name(self, user_id: str, display_name: str) -> bool:
+        """
+        更新用户显示名称
+
+        Returns:
+            成功返回 True
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn.execute(
+                "UPDATE users SET display_name = ? WHERE id = ?",
+                (display_name, user_id),
+            )
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"update_user_display_name failed: {e}")
+            return False
+
+    def update_user_password(self, user_id: str, new_password_hash: str) -> bool:
+        """
+        更新用户密码哈希
+
+        Returns:
+            成功返回 True
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (new_password_hash, user_id),
+            )
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"update_user_password failed: {e}")
+            return False
+
+    def delete_user_and_data(self, user_id: str) -> bool:
+        """
+        删除用户账户及其所有关联数据（级联删除）
+
+        删除顺序：answer_history, spaced_repetition_stats, bookmarks,
+        learning_goals, email_logs, experiment_logs, users
+
+        注意：bandit_stats 表无 user_id 列，跳过。
+
+        Returns:
+            成功返回 True
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            related_tables = [
+                ("answer_history", "user_id"),
+                ("spaced_repetition_stats", "user_id"),
+                ("bookmarks", "user_id"),
+                ("learning_goals", "user_id"),
+                ("email_logs", "user_id"),
+                ("experiment_logs", "user_id"),
+            ]
+            for table, col in related_tables:
+                conn.execute(f"DELETE FROM {table} WHERE {col} = ?", (user_id,))
+            conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"delete_user_and_data failed: {e}")
+            return False
+
+    def get_user_stats(self, user_id: str) -> Dict[str, Any]:
+        """
+        获取用户学习统计数据
+
+        Returns:
+            {total_questions, total_correct, accuracy_pct, best_streak,
+             member_since, current_theta, favorite_question_type}
+        """
+        _default: Dict[str, Any] = {
+            "total_questions": 0,
+            "total_correct": 0,
+            "accuracy_pct": 0.0,
+            "best_streak": 0,
+            "member_since": None,
+            "current_theta": None,
+            "favorite_question_type": None,
+        }
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+
+            # 总答题数 & 正确数
+            cursor.execute(
+                "SELECT COUNT(*), SUM(is_correct) FROM answer_history WHERE user_id = ?",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            total_questions: int = row[0] or 0
+            total_correct: int = int(row[1] or 0)
+            accuracy_pct: float = (
+                round(total_correct / total_questions * 100, 1) if total_questions > 0 else 0.0
+            )
+
+            # 最新 theta（按 created_at 降序）
+            cursor.execute(
+                """SELECT theta_at_time FROM answer_history
+                   WHERE user_id = ? AND theta_at_time IS NOT NULL
+                   ORDER BY created_at DESC LIMIT 1""",
+                (user_id,),
+            )
+            theta_row = cursor.fetchone()
+            current_theta = theta_row[0] if theta_row else None
+
+            # 最常见题型
+            cursor.execute(
+                """SELECT q.question_type, COUNT(*) as cnt
+                   FROM answer_history ah
+                   LEFT JOIN questions q ON ah.question_id = q.id
+                   WHERE ah.user_id = ?
+                   GROUP BY q.question_type
+                   ORDER BY cnt DESC LIMIT 1""",
+                (user_id,),
+            )
+            fav_row = cursor.fetchone()
+            favorite_question_type = fav_row[0] if fav_row and fav_row[0] else None
+
+            # 所有练习日期（用于计算最长连续天数）
+            cursor.execute(
+                """SELECT DISTINCT DATE(created_at) FROM answer_history
+                   WHERE user_id = ? ORDER BY 1 ASC""",
+                (user_id,),
+            )
+            date_strs = [r[0] for r in cursor.fetchall()]
+
+            # 注册时间
+            cursor.execute("SELECT created_at FROM users WHERE id = ?", (user_id,))
+            user_row = cursor.fetchone()
+            member_since = str(user_row[0]) if user_row and user_row[0] else None
+
+            conn.close()
+
+            # 计算历史最长连续天数
+            best_streak: int = 0
+            if date_strs:
+                from datetime import date as _date, timedelta
+                dates = [_date.fromisoformat(d) for d in date_strs]
+                current_run = 1
+                best_streak = 1
+                for i in range(1, len(dates)):
+                    if dates[i] == dates[i - 1] + timedelta(days=1):
+                        current_run += 1
+                        if current_run > best_streak:
+                            best_streak = current_run
+                    else:
+                        current_run = 1
+
+            return {
+                "total_questions": total_questions,
+                "total_correct": total_correct,
+                "accuracy_pct": accuracy_pct,
+                "best_streak": best_streak,
+                "member_since": member_since,
+                "current_theta": current_theta,
+                "favorite_question_type": favorite_question_type,
+            }
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"get_user_stats failed: {e}")
+            return _default
 
 
 # 为了向后兼容，创建全局实例和函数包装器
