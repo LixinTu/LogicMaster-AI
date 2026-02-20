@@ -64,6 +64,7 @@ export default function Practice() {
   const [tutorInput, setTutorInput] = useState('');
   const [explanation, setExplanation] = useState<any>(null);
   const [isFavorited, setIsFavorited] = useState(false);
+  const [tutoringComplete, setTutoringComplete] = useState(false);
 
   const fetchQuestion = useCallback(async (reviewQuestionId?: string) => {
     store.setPracticeState('loading');
@@ -145,10 +146,11 @@ export default function Practice() {
         setFlashColor('hsl(152, 100%, 50%)');
         store.setPracticeState('correct');
       } else {
+        const userChoice = store.selectedChoice; // Issue 3: capture before clearing
         setFlashColor('hsl(345, 100%, 60%)');
         store.setSelectedChoice(null);
         store.setPracticeState('retrying');
-        startTutoring();
+        startTutoring(userChoice);
       }
 
       setTimeout(() => setFlashColor(null), 300);
@@ -186,34 +188,43 @@ export default function Practice() {
     }
   };
 
-  const startTutoring = async () => {
-    if (!store.currentQuestion || !store.selectedChoice) return;
+  const startTutoring = async (userChoice: string | null) => {
+    if (!store.currentQuestion || !userChoice) return;
     store.clearTutorMessages();
+    setTutoringComplete(false);
     const userId = getUserId();
+    const choiceLetter = userChoice.charAt(0); // Issue 4: send letter only, not full text
+
+    // Issue 2: show panel immediately with loading placeholder
+    store.addTutorMessage({ role: 'system', content: '⏳ Analyzing your logic...' });
+    store.setHintCount(0); // Issue 1: hint_count starts at 0
 
     try {
       const res = await api.startRemediation(
         store.currentQuestion.question_id,
         store.currentQuestion,
-        store.selectedChoice,
+        choiceLetter, // Issue 4
         store.currentQuestion.correct_answer,
         userId
       );
       store.setConversationId(res.conversation_id);
+      // Issue 2: replace loading placeholder with actual diagnosis + hint
+      store.clearTutorMessages();
       if (res.logic_gap) {
         store.addTutorMessage({ role: 'system', content: res.logic_gap });
       }
       if (res.first_hint) {
         store.addTutorMessage({ role: 'system', content: res.first_hint });
       }
-      store.setHintCount(res.hint_count);
+      store.setHintCount(0); // Issue 1: always 0 after start-remediation
     } catch (err) {
+      store.clearTutorMessages();
       store.addTutorMessage({ role: 'system', content: '⚠️ TUTOR CONNECTION INTERRUPTED — Analyzing your logic independently...' });
     }
   };
 
   const sendTutorMessage = async () => {
-    if (!tutorInput.trim() || !store.conversationId || !store.currentQuestion) return;
+    if (!tutorInput.trim() || !store.conversationId || !store.currentQuestion || tutoringComplete) return;
     const msg = tutorInput.trim();
     setTutorInput('');
     store.addTutorMessage({ role: 'user', content: msg });
@@ -227,7 +238,25 @@ export default function Practice() {
       store.setHintCount(res.hint_count);
 
       if (!res.should_continue) {
-        await concludeTutoring();
+        // Issue 7: do NOT call /conclude again (would generate a second LLM conclusion)
+        // Issue 6: mark session complete, add completion message
+        setTutoringComplete(true);
+        store.addTutorMessage({
+          role: 'system',
+          content: '✅ TUTORING SESSION COMPLETE — Select the correct answer above to continue.',
+        });
+        // Issue 5: wire up RAG explanation
+        try {
+          const expResult = await api.generateExplanation(
+            store.currentQuestion.question_id,
+            store.currentQuestion,
+            '',
+            false
+          );
+          setExplanation(typeof expResult === 'string' ? expResult : expResult?.explanation || '');
+        } catch {
+          // explanation stays null if RAG fails
+        }
       }
     } catch (err) {
       store.addTutorMessage({ role: 'system', content: '⚠️ Signal lost. Try again.' });
@@ -248,6 +277,7 @@ export default function Practice() {
   const handleNext = () => {
     setExplanation(null);
     setIsFavorited(false);
+    setTutoringComplete(false);
     store.resetPracticeState();
     fetchQuestion();
   };
@@ -467,7 +497,7 @@ export default function Practice() {
             <p className="text-xs font-mono text-foreground/60 mt-1">You have one more chance. Use the hints below or select your answer directly.</p>
           </div>
 
-          {store.tutorMessages.length > 0 && (
+          {(store.practiceState === 'retrying' || store.tutorMessages.length > 0) && (
             <div className="glass-card rounded-lg overflow-hidden mb-4" style={{ borderLeftWidth: '3px', borderLeftColor: 'hsl(180, 100%, 50%)' }}>
               <div className="p-4 border-b border-border flex items-center gap-2">
                 <span className="font-heading text-secondary text-sm tracking-wider">LOGIC DEBUGGER</span>
@@ -544,13 +574,15 @@ export default function Practice() {
                     value={tutorInput}
                     onChange={(e) => setTutorInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && sendTutorMessage()}
-                    placeholder="Type your reasoning..."
-                    className="w-full bg-muted border border-primary/20 rounded px-7 py-2 text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
+                    placeholder={tutoringComplete ? 'Session complete — select an answer above' : 'Type your reasoning...'}
+                    disabled={tutoringComplete}
+                    className="w-full bg-muted border border-primary/20 rounded px-7 py-2 text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50 disabled:opacity-40 disabled:cursor-not-allowed"
                   />
                 </div>
                 <button
                   onClick={sendTutorMessage}
-                  className="px-3 py-2 bg-primary text-primary-foreground rounded glow-hover"
+                  disabled={tutoringComplete}
+                  className="px-3 py-2 bg-primary text-primary-foreground rounded glow-hover disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Send size={14} />
                 </button>

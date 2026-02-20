@@ -211,7 +211,7 @@ class TestStartRemediation:
         assert data["first_hint"] == "What is the main conclusion?"
         assert data["logic_gap"] == "Student confused correlation with causation."
         assert data["error_type"] == "correlation_causation"
-        assert data["hint_count"] == 1
+        assert data["hint_count"] == 0
         assert data["current_state"] == STATE_HINTING
         assert data["variant"] == "socratic_standard"
 
@@ -237,7 +237,7 @@ class TestStartRemediation:
         data = resp.json()
         assert "conversation_id" in data
         assert "step back" in data["first_hint"].lower() or len(data["first_hint"]) > 0
-        assert data["hint_count"] == 1
+        assert data["hint_count"] == 0
         assert data["current_state"] == STATE_HINTING
 
 

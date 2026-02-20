@@ -3,18 +3,12 @@ import { motion } from 'framer-motion';
 import { useAppStore } from '@/store/useAppStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { api, isDemoMode, GoalProgress } from '@/lib/api';
-import { Eye, EyeOff, Check, X, Lightbulb, Target } from 'lucide-react';
+import { Lightbulb, Target } from 'lucide-react';
 import { Slider } from '@/components/ui/slider';
 
 export default function SettingsPage() {
   const store = useAppStore();
   const { getUserId } = useAuthStore();
-  const [showDeepseek, setShowDeepseek] = useState(false);
-  const [showOpenai, setShowOpenai] = useState(false);
-  const [testResults, setTestResults] = useState<Record<string, boolean | null>>({
-    deepseek: null,
-    openai: null,
-  });
   const [healthData, setHealthData] = useState<any>(null);
 
   // Learning Goals state
@@ -43,13 +37,12 @@ export default function SettingsPage() {
   const progressPct = ((currentGmat - 20) / (51 - 20)) * 100;
   const targetPct = ((targetGmat - 20) / (51 - 20)) * 100;
 
-  const testConnection = async (key: string) => {
+  const testConnection = async () => {
     try {
       const res = await api.health();
-      setTestResults((prev) => ({ ...prev, [key]: res.status === 'ok' }));
       setHealthData(res);
     } catch {
-      setTestResults((prev) => ({ ...prev, [key]: false }));
+      setHealthData(null);
     }
   };
 
@@ -68,48 +61,6 @@ export default function SettingsPage() {
           DEMO MODE — API Offline · Changes saved locally
         </div>
       )}
-
-      {/* API Configuration */}
-      <motion.div
-        className="bg-card border border-border rounded-lg p-6"
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-      >
-        <h3 className="font-heading text-sm text-foreground tracking-wider mb-5">API CONFIGURATION</h3>
-        {[
-          { label: 'DeepSeek API Key', value: store.deepseekApiKey, set: store.setDeepseekApiKey, show: showDeepseek, toggle: () => setShowDeepseek(!showDeepseek), testKey: 'deepseek' },
-          { label: 'OpenAI API Key', value: store.openaiApiKey, set: store.setOpenaiApiKey, show: showOpenai, toggle: () => setShowOpenai(!showOpenai), testKey: 'openai' },
-        ].map((field) => (
-          <div key={field.label} className="mb-4">
-            <label className="text-[10px] font-mono text-foreground/80 uppercase tracking-widest mb-1.5 block">{field.label}</label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <input
-                  type={field.show ? 'text' : 'password'}
-                  value={field.value}
-                  onChange={(e) => field.set(e.target.value)}
-                  placeholder="sk-..."
-                  className="w-full bg-muted border border-border rounded px-3 py-2 text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
-                />
-                <button onClick={field.toggle} className="absolute right-2 top-1/2 -translate-y-1/2 text-foreground/70 hover:text-foreground">
-                  {field.show ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
-              <button
-                onClick={() => testConnection(field.testKey)}
-                className="px-3 py-2 bg-muted border border-border rounded text-xs font-mono text-foreground/80 hover:text-foreground hover:border-primary/30 transition-colors"
-              >
-                Test
-              </button>
-              {testResults[field.testKey] !== null && (
-                <span className={`flex items-center ${testResults[field.testKey] ? 'text-success' : 'text-destructive'}`}>
-                  {testResults[field.testKey] ? <Check size={16} /> : <X size={16} />}
-                </span>
-              )}
-            </div>
-          </div>
-        ))}
-      </motion.div>
 
       {/* Display */}
       <motion.div
@@ -222,7 +173,7 @@ export default function SettingsPage() {
       >
         <div className="flex items-center justify-between mb-5">
           <h3 className="font-heading text-sm text-foreground tracking-wider">SYSTEM HEALTH</h3>
-          <button onClick={() => testConnection('deepseek')} className="text-[10px] font-mono text-foreground/70 hover:text-primary transition-colors">Refresh</button>
+          <button onClick={() => testConnection()} className="text-[10px] font-mono text-foreground/70 hover:text-primary transition-colors">Refresh</button>
         </div>
         {healthData ? (
           <div className="space-y-2">

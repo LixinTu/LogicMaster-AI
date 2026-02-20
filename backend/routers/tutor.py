@@ -213,14 +213,14 @@ def start_remediation(req: StartRemediationRequest):
                 chat_history=cm.get_context_for_llm(cid),
             )
             cm.add_message(cid, "assistant", first_hint)
-            cm.update_state(cid, hint_count=hint_count_start + 1)
+            cm.update_state(cid, hint_count=0)  # hint_count only increments via /continue
 
             return StartRemediationResponse(
                 conversation_id=cid,
                 first_hint=first_hint,
                 logic_gap=logic_gap,
                 error_type=error_type,
-                hint_count=hint_count_start + 1,
+                hint_count=0,
                 student_understanding="confused",
                 current_state=STATE_HINTING,
                 variant=variant,
@@ -232,7 +232,7 @@ def start_remediation(req: StartRemediationRequest):
         cm = get_conversation_manager()
         conv = cm.create_conversation(question_id=req.question_id)
         cid = conv.conversation_id
-        cm.update_state(cid, state=STATE_HINTING, hint_count=1)
+        cm.update_state(cid, state=STATE_HINTING, hint_count=0)  # hint_count only increments via /continue
         cm.add_message(cid, "user", f"I chose answer: {req.user_choice}")
 
         fallback_hint = "Let's take a step back. What is the main conclusion of the argument?"
@@ -249,7 +249,7 @@ def start_remediation(req: StartRemediationRequest):
             first_hint=fallback_hint,
             logic_gap="Unable to diagnose — using default guidance.",
             error_type="other",
-            hint_count=1,
+            hint_count=0,
             student_understanding="confused",
             current_state=STATE_HINTING,
             variant="socratic_standard",
