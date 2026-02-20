@@ -37,9 +37,12 @@ class DashboardSummary(BaseModel):
     streak_days: int
     current_theta: float
     gmat_score: int
+    accuracy_pct: float
+    total_questions: int
     weak_skills: List[WeakSkill]
     reviews_due: int
     last_practiced: Optional[str]
+    last_7_days: List[bool]
 
 
 # ---------- 端点 ----------
@@ -73,6 +76,11 @@ def get_dashboard_summary(user_id: str = "default"):
     theta: float = db.get_latest_theta(user_id) or 0.0
     gmat_score: int = estimate_gmat_score(theta)
 
+    # 总体统计（accuracy_pct / total_questions）
+    user_stats = db.get_user_stats(user_id)
+    accuracy_pct: float = user_stats.get("accuracy_pct", 0.0)
+    total_questions: int = user_stats.get("total_questions", 0)
+
     # 薄弱技能（DKT 错误率）
     raw_skills = db.get_skill_error_rates(user_id, limit=3)
     weak_skills = [WeakSkill(**s) for s in raw_skills]
@@ -89,13 +97,19 @@ def get_dashboard_summary(user_id: str = "default"):
     # 最后答题时间
     last_practiced: Optional[str] = db.get_last_practiced_time(user_id)
 
+    # 最近 7 天练习情况
+    last_7_days: List[bool] = db.get_last_7_days(user_id)
+
     return DashboardSummary(
         today_goal=today_goal,
         today_completed=today_completed,
         streak_days=streak_days,
         current_theta=round(theta, 4),
         gmat_score=gmat_score,
+        accuracy_pct=accuracy_pct,
+        total_questions=total_questions,
         weak_skills=weak_skills,
         reviews_due=reviews_due,
         last_practiced=last_practiced,
+        last_7_days=last_7_days,
     )

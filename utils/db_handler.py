@@ -905,6 +905,37 @@ class DatabaseManager:
                 conn.close()
             return None
 
+    def get_last_7_days(self, user_id: str = "default") -> List[bool]:
+        """
+        返回最近 7 天（今天往前，含今天）的练习情况。
+        列表索引 0 = 6 天前, 索引 6 = 今天。
+
+        Returns:
+            长度为 7 的布尔列表，True 表示当天至少有一条答题记录
+        """
+        from datetime import datetime, timedelta, timezone
+        today = datetime.now(timezone.utc).date()
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            cursor = conn.cursor()
+            result: List[bool] = []
+            for i in range(6, -1, -1):
+                day = today - timedelta(days=i)
+                cursor.execute(
+                    "SELECT COUNT(*) FROM answer_history WHERE user_id = ? AND DATE(created_at) = ?",
+                    (user_id, day.isoformat()),
+                )
+                count = cursor.fetchone()[0]
+                result.append(count > 0)
+            conn.close()
+            return result
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"get_last_7_days failed: {e}")
+            return [False] * 7
+
     def get_last_practiced_time(self, user_id: str = "default") -> Optional[str]:
         """
         获取用户最后一次答题的时间戳

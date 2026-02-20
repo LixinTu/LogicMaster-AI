@@ -4,7 +4,7 @@
 """
 
 import os
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
@@ -35,10 +35,11 @@ class GoalProgressResponse(BaseModel):
     current_gmat_score: int
     score_gap: int
     estimated_questions_remaining: int
-    daily_goal: int
+    daily_question_goal: int
     today_completed: int
     today_progress_pct: float
     on_track: bool
+    last_7_days: List[bool] = []
 
 
 # ---------- 端点 ----------
@@ -104,13 +105,16 @@ def get_goal_progress(user_id: str = "default"):
     # 是否达成今日目标
     on_track: bool = today_completed >= daily_goal
 
+    last_7_days: List[bool] = db.get_last_7_days(user_id)
+
     return GoalProgressResponse(
         target_gmat_score=target_gmat,
         current_gmat_score=current_gmat,
         score_gap=score_gap,
         estimated_questions_remaining=estimated_remaining,
-        daily_goal=daily_goal,
+        daily_question_goal=daily_goal,
         today_completed=today_completed,
         today_progress_pct=round(today_pct, 1),
         on_track=on_track,
+        last_7_days=last_7_days,
     )

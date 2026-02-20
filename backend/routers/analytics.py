@@ -6,6 +6,7 @@ Analytics API（Week 4）
 """
 
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -13,6 +14,26 @@ from pydantic import BaseModel, Field
 
 from backend.services.ab_testing import get_ab_test_service
 from backend.config import settings
+from engine.scoring import estimate_gmat_score
+from utils.db_handler import DatabaseManager
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_DB_PATH = os.path.join(_PROJECT_ROOT, "logicmaster.db")
+
+
+def _get_db() -> DatabaseManager:
+    return DatabaseManager(db_path=_DB_PATH)
+
+
+_TYPE_COLORS: Dict[str, str] = {
+    "Weaken": "hsl(345, 100%, 60%)",
+    "Strengthen": "hsl(152, 100%, 50%)",
+    "Assumption": "hsl(56, 100%, 50%)",
+    "Inference": "hsl(180, 100%, 50%)",
+    "Flaw": "hsl(20, 100%, 60%)",
+    "Evaluate": "hsl(270, 80%, 60%)",
+    "Boldface": "hsl(210, 80%, 55%)",
+}
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
@@ -106,6 +127,66 @@ def get_ab_test_results(experiment: str = Query("tutor_strategy", description="�
         total_outcomes=raw.get("total_outcomes", 0),
         variants=variants_out,
     )
+
+
+@router.get("/summary")
+def get_analytics_summary(user_id: str = "default"):
+    """
+    获取用户学习统计汇总（供 Analytics 页面图表使用）。
+    返回 answer_history, wrong_by_type, wrong_by_skill, skill_mastery 等。
+    """
+    db = _get_db()
+
+    # 基础统计
+    stats = db.get_user_stats(user_id)
+    theta: float = stats.get("current_theta") or 0.0
+
+    # 答题历史（学习曲线）
+    history = db.query_answer_history(user_id=user_id)
+    answer_history = [
+        {
+            "question_id": h["question_id"],
+            "is_correct": bool(h["is_correct"]),
+            "theta_at_time": h.get("theta_at_time") or 0.0,
+            "timestamp": h.get("created_at"),
+        }
+        for h in history
+    ]
+
+    # 错题分析
+    wrong_stats = db.get_wrong_stats(user_id)
+    wrong_by_type = [
+        {
+            "name": t["question_type"],
+            "value": t["count"],
+            "color": _TYPE_COLORS.get(t["question_type"], "hsl(260, 60%, 50%)"),
+        }
+        for t in wrong_stats.get("by_type", [])
+    ]
+    wrong_by_skill = [
+        {"skill": s["skill_name"], "count": s["count"]}
+        for s in wrong_stats.get("by_skill", [])
+    ]
+
+    # 技能掌握度（错误率取反，转换为 0-100）
+    skill_rates = db.get_skill_error_rates(user_id, limit=10)
+    skill_mastery = [
+        {"skill": s["skill_name"], "value": round(s["mastery"] * 100)}
+        for s in skill_rates
+    ]
+
+    return {
+        "total_questions": stats["total_questions"],
+        "total_correct": stats["total_correct"],
+        "accuracy_pct": stats["accuracy_pct"],
+        "current_theta": round(theta, 4),
+        "current_gmat_score": estimate_gmat_score(theta),
+        "best_streak": stats["best_streak"],
+        "answer_history": answer_history,
+        "wrong_by_type": wrong_by_type,
+        "wrong_by_skill": wrong_by_skill,
+        "skill_mastery": skill_mastery,
+    }
 
 
 @router.get("/rag-performance", response_model=RAGPerformanceResponse)

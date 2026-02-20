@@ -4,7 +4,9 @@
 """
 
 import io
+import json
 import os
+import sqlite3
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -17,6 +19,65 @@ from engine.spaced_repetition import get_spaced_repetition_model
 from utils.db_handler import DatabaseManager
 
 router = APIRouter(prefix="/api/questions", tags=["questions"])
+
+
+def _correct_to_letter(correct: Any, choices: list) -> str:
+    """将 correct 字段（整数索引或字母字符串）统一转换为大写字母 A-E。"""
+    if correct is None:
+        return ""
+    if isinstance(correct, int):
+        if 0 <= correct < len(choices):
+            return chr(65 + correct)
+        return ""
+    if isinstance(correct, str):
+        c = correct.strip().upper()
+        if c in ("A", "B", "C", "D", "E"):
+            return c
+        try:
+            idx = int(correct)
+            if 0 <= idx < len(choices):
+                return chr(65 + idx)
+        except ValueError:
+            pass
+    return ""
+
+
+def _fetch_question_metadata(question_ids: List[str]) -> Dict[str, Dict]:
+    """批量查询题目的 question_type/difficulty/stimulus_preview/skills。"""
+    if not question_ids:
+        return {}
+    result: Dict[str, Dict] = {}
+    conn = None
+    try:
+        conn = sqlite3.connect(_DB_PATH, timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        placeholders = ",".join("?" * len(question_ids))
+        cursor.execute(
+            f"SELECT id, question_type, difficulty, content FROM questions WHERE id IN ({placeholders})",
+            question_ids,
+        )
+        for row in cursor.fetchall():
+            content: Dict[str, Any] = {}
+            try:
+                if row["content"]:
+                    content = json.loads(row["content"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+            stimulus = content.get("stimulus", "")
+            preview = stimulus[:150] + "..." if len(stimulus) > 150 else stimulus
+            result[row["id"]] = {
+                "question_type": row["question_type"] or "",
+                "difficulty": row["difficulty"] or "",
+                "stimulus_preview": preview,
+                "skills": content.get("skills", []),
+            }
+        conn.close()
+    except Exception as e:
+        if conn:
+            conn.close()
+        print(f"_fetch_question_metadata failed: {e}")
+    return result
 
 # 数据库路径：项目根目录下的 logicmaster.db
 # __file__ 在 backend/routers/ 下，需要上溯两级到项目根目录
@@ -70,7 +131,7 @@ class NextQuestionResponse(BaseModel):
     question: str
     choices: List[str]
     skills: List[str] = []
-    # 注意：不返回 correct 字段，防止前端作弊
+    correct_answer: str = ""  # 正确答案字母 A-E（供前端判题用）
 
 
 # ---------- 端点 ----------
@@ -108,6 +169,7 @@ def get_next_question(req: NextQuestionRequest):
     if result is None:
         raise HTTPException(status_code=404, detail="没有找到合适的题目")
 
+    choices = result.get("choices", [])
     return NextQuestionResponse(
         question_id=result.get("question_id", ""),
         question_type=result.get("question_type", ""),
@@ -115,8 +177,9 @@ def get_next_question(req: NextQuestionRequest):
         elo_difficulty=result.get("elo_difficulty", 1500.0),
         stimulus=result.get("stimulus", ""),
         question=result.get("question", ""),
-        choices=result.get("choices", []),
+        choices=choices,
         skills=result.get("skills", []),
+        correct_answer=_correct_to_letter(result.get("correct"), choices),
     )
 
 
@@ -182,6 +245,10 @@ class ReviewItem(BaseModel):
     recall_probability: float
     half_life: float
     elapsed_days: float
+    question_type: Optional[str] = None
+    difficulty: Optional[str] = None
+    stimulus_preview: Optional[str] = None
+    skills: List[str] = []
 
 
 class ReviewScheduleResponse(BaseModel):
@@ -199,10 +266,73 @@ def get_review_schedule(user_id: str = "default", threshold: float = 0.5):
     """
     sr_model = get_spaced_repetition_model(user_id=user_id)
     candidates = sr_model.get_review_candidates(threshold=threshold)
-    reviews = [ReviewItem(**c) for c in candidates]
+
+    # 批量查询题目元数据（题型、难度、摘要、技能）
+    qids = [c["question_id"] for c in candidates]
+    meta = _fetch_question_metadata(qids)
+
+    reviews = []
+    for c in candidates:
+        qid = c["question_id"]
+        m = meta.get(qid, {})
+        reviews.append(ReviewItem(
+            question_id=qid,
+            recall_probability=c["recall_probability"],
+            half_life=c["half_life"],
+            elapsed_days=c["elapsed_days"],
+            question_type=m.get("question_type"),
+            difficulty=m.get("difficulty"),
+            stimulus_preview=m.get("stimulus_preview"),
+            skills=m.get("skills", []),
+        ))
+
     return ReviewScheduleResponse(
         user_id=user_id,
         threshold=threshold,
         due_count=len(reviews),
         reviews=reviews,
     )
+
+
+@router.get("/{question_id}", response_model=NextQuestionResponse)
+def get_question_by_id(question_id: str):
+    """
+    按 ID 获取单道题目（供复习/重做流程使用）。
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(_DB_PATH, timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, question_type, difficulty, content, elo_difficulty FROM questions WHERE id = ? AND is_verified != 0",
+            (question_id,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Question not found")
+        content: Dict[str, Any] = {}
+        try:
+            if row["content"]:
+                content = json.loads(row["content"])
+        except (json.JSONDecodeError, TypeError):
+            pass
+        choices = content.get("choices", [])
+        return NextQuestionResponse(
+            question_id=row["id"],
+            question_type=row["question_type"] or "",
+            difficulty=row["difficulty"] or "",
+            elo_difficulty=row["elo_difficulty"] or 1500.0,
+            stimulus=content.get("stimulus", ""),
+            question=content.get("question", ""),
+            choices=choices,
+            skills=content.get("skills", []),
+            correct_answer=_correct_to_letter(content.get("correct"), choices),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
