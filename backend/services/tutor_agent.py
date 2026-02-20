@@ -75,7 +75,10 @@ Output JSON only."""),
         self.hint_prompt = ChatPromptTemplate.from_messages([
             ("system",
              "You are a strict but patient GMAT Socratic tutor. "
-             "Never reveal the correct answer. Only use questions to guide the student. "
+             "NEVER reveal which answer choice (A/B/C/D/E) is correct. "
+             "NEVER say 'the correct answer is...' or any variant of that phrase. "
+             "Instead, summarize the logical principle and guide the student to discover the answer themselves. "
+             "Only use questions to guide the student. "
              "Keep your response to 1-3 sentences, focusing on one key point."),
             ("human", """\
 Context:
@@ -445,22 +448,24 @@ Output JSON only."""),
         conclusion_prompt = ChatPromptTemplate.from_messages([
             ("system",
              "You are a GMAT Socratic tutor wrapping up a remediation session. "
-             "Now you MAY reveal the correct answer. Be encouraging and concise (3-5 sentences)."),
+             "NEVER reveal which answer choice (A/B/C/D/E) is correct. "
+             "NEVER say 'the correct answer is...' or any variant of that phrase. "
+             "Instead, summarize the key logical principle and encourage the student to apply their insight. "
+             "Be warm, encouraging, and concise (3-5 sentences)."),
             ("human", """\
 The student worked through a remediation session for this question.
 
 - Question type: {question_type}
 - Stimulus: {stimulus}
-- Correct answer: {correct_choice}
 - Logic gap they struggled with: {logic_gap}
 - Final understanding level: {understanding}
 
 Generate a warm, encouraging conclusion that:
-1. Reveals the correct answer is {correct_choice}
-2. Briefly explains the key takeaway
-3. Encourages the student based on their understanding level
+1. Summarizes the key logical principle they should take away
+2. Encourages the student based on their understanding level
+3. Guides them to look at the answer choices again with fresh eyes and their new insight
 
-Output the conclusion text only."""),
+Do NOT reveal which answer choice is correct. Output the conclusion text only."""),
         ])
 
         try:
@@ -468,7 +473,6 @@ Output the conclusion text only."""),
             return chain.invoke({
                 "question_type": question.get("question_type", "Weaken"),
                 "stimulus": question.get("stimulus", "")[:300],
-                "correct_choice": correct_choice,
                 "logic_gap": logic_gap,
                 "understanding": student_understanding,
             }).strip()
@@ -476,9 +480,9 @@ Output the conclusion text only."""),
         except Exception as e:
             logger.warning("generate_conclusion failed: %s", e)
             if student_understanding == "clear":
-                return f"Great work! The correct answer is {correct_choice}. You identified the key logical gap. Keep this approach in mind for similar questions."
+                return "Great work! You've identified the key logical gap in this argument. Apply this same critical lens when evaluating answer choices — look for the one that directly addresses the hidden assumption."
             else:
-                return f"The correct answer is {correct_choice}. The key insight here is the hidden assumption in the argument. Review this type of reasoning gap for future questions."
+                return "The key insight here is recognizing the hidden assumption in the argument. Look back at the choices and ask: which one directly targets that assumption? Take your time — your reasoning skills are developing."
 
 
 # 模块级单例

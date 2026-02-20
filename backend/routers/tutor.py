@@ -333,8 +333,8 @@ def continue_remediation(req: ContinueRequest):
                 student_understanding=understanding,
                 should_continue=False,
                 current_state=STATE_CONCLUDED,
-                blooms_level=blooms_level,
-                blooms_name=blooms_name,
+                blooms_level=6,       # Force progress bar to complete on session end
+                blooms_name="Create",
             )
 
     except Exception as e:
