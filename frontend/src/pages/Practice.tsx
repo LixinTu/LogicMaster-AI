@@ -175,6 +175,7 @@ export default function Practice() {
   const [flashColor, setFlashColor] = useState<string | null>(null);
   const [tutorInput, setTutorInput] = useState('');
   const [explanation, setExplanation] = useState<any>(null);
+  const [explanationLoading, setExplanationLoading] = useState(false);
   const [isFavorited, setIsFavorited] = useState(false);
   const [tutoringComplete, setTutoringComplete] = useState(false);
 
@@ -290,6 +291,7 @@ export default function Practice() {
         store.setPracticeState('correct');
         // Show explanation even on correct retry so the user can learn from it
         if (!explanation) {
+          setExplanationLoading(true);
           try {
             const expResult = await api.generateExplanation(
               store.currentQuestion.question_id,
@@ -300,6 +302,8 @@ export default function Practice() {
             setExplanation(typeof expResult === 'string' ? expResult : expResult?.explanation || '');
           } catch {
             // silent fail
+          } finally {
+            setExplanationLoading(false);
           }
         }
       } else {
@@ -307,6 +311,7 @@ export default function Practice() {
         store.setPracticeState('wrong');
         // Always ensure explanation is available in the 'wrong' state
         if (!explanation) {
+          setExplanationLoading(true);
           try {
             const expResult = await api.generateExplanation(
               store.currentQuestion.question_id,
@@ -317,6 +322,8 @@ export default function Practice() {
             setExplanation(typeof expResult === 'string' ? expResult : expResult?.explanation || '');
           } catch {
             // silent fail — card still renders without explanation
+          } finally {
+            setExplanationLoading(false);
           }
         }
       }
@@ -386,6 +393,7 @@ export default function Practice() {
           content: '✅ TUTORING SESSION COMPLETE — Select the correct answer above to continue.',
         });
         // Issue 5: wire up RAG explanation
+        setExplanationLoading(true);
         try {
           const expResult = await api.generateExplanation(
             store.currentQuestion.question_id,
@@ -396,6 +404,8 @@ export default function Practice() {
           setExplanation(typeof expResult === 'string' ? expResult : expResult?.explanation || '');
         } catch {
           // explanation stays null if RAG fails
+        } finally {
+          setExplanationLoading(false);
         }
       }
     } catch (err) {
@@ -416,6 +426,7 @@ export default function Practice() {
 
   const handleNext = () => {
     setExplanation(null);
+    setExplanationLoading(false);
     setIsFavorited(false);
     setTutoringComplete(false);
     store.resetPracticeState();
@@ -621,7 +632,7 @@ export default function Practice() {
             </div>
           </div>
 
-          {explanation && (
+          {(explanationLoading || explanation) && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -631,7 +642,16 @@ export default function Practice() {
               <h4 className="font-mono text-xs font-bold tracking-widest mb-4" style={{ color: 'hsl(180, 100%, 60%)' }}>
                 LOGIC PATCH NOTES
               </h4>
-              <ExplanationMarkdown text={typeof explanation === 'string' ? explanation : JSON.stringify(explanation)} />
+              {explanationLoading && !explanation ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin" style={{ color: 'hsl(180, 100%, 60%)' }} />
+                  <p className="font-mono text-sm animate-pulse" style={{ color: 'hsl(0, 0%, 50%)' }}>
+                    Generating explanation...
+                  </p>
+                </div>
+              ) : (
+                <ExplanationMarkdown text={typeof explanation === 'string' ? explanation : JSON.stringify(explanation)} />
+              )}
             </motion.div>
           )}
 
@@ -755,7 +775,7 @@ export default function Practice() {
             <p className="text-xs font-mono text-muted-foreground mt-1">Added to Wrong Book 📚</p>
           </div>
 
-          {explanation && (
+          {(explanationLoading || explanation) && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -765,7 +785,16 @@ export default function Practice() {
               <h4 className="font-mono text-xs font-bold tracking-widest mb-4" style={{ color: 'hsl(180, 100%, 60%)' }}>
                 LOGIC PATCH NOTES
               </h4>
-              <ExplanationMarkdown text={typeof explanation === 'string' ? explanation : JSON.stringify(explanation)} />
+              {explanationLoading && !explanation ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin" style={{ color: 'hsl(180, 100%, 60%)' }} />
+                  <p className="font-mono text-sm animate-pulse" style={{ color: 'hsl(0, 0%, 50%)' }}>
+                    Generating explanation...
+                  </p>
+                </div>
+              ) : (
+                <ExplanationMarkdown text={typeof explanation === 'string' ? explanation : JSON.stringify(explanation)} />
+              )}
             </motion.div>
           )}
 
