@@ -29,6 +29,118 @@ const getDifficultyBadgeClass = (diff: string) => {
   }
 };
 
+// ---- Explanation markdown renderer ----
+
+function renderInlineBold(text: string) {
+  const parts = text.split(/\*\*([^*]+)\*\*/);
+  return parts.map((part, i) =>
+    i % 2 === 1
+      ? <strong key={i} style={{ color: 'hsl(56, 100%, 50%)', fontWeight: 700 }}>{part}</strong>
+      : <span key={i}>{part}</span>
+  );
+}
+
+function ExplanationMarkdown({ text }: { text: string }) {
+  const lines = text.split('\n');
+  const nodes: JSX.Element[] = [];
+  let bullets: string[] = [];
+  let k = 0;
+
+  function flushBullets() {
+    if (!bullets.length) return;
+    nodes.push(
+      <ul key={`ul${k++}`} style={{ listStyle: 'none', padding: 0, margin: '0 0 12px 0' }}>
+        {bullets.map((item, bi) => (
+          <li key={bi} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', marginBottom: '4px' }}>
+            <span style={{ color: 'hsl(180, 100%, 50%)', flexShrink: 0, marginTop: '3px', fontSize: '10px' }}>▸</span>
+            <span style={{ color: 'hsl(0, 0%, 85%)', fontSize: '14px', lineHeight: 1.6 }}>
+              {renderInlineBold(item)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    );
+    bullets = [];
+  }
+
+  for (const line of lines) {
+    const t = line.trim();
+
+    // Section header: ## or #
+    if (/^#{1,3}\s/.test(t)) {
+      flushBullets();
+      nodes.push(
+        <p key={`h${k++}`} style={{
+          color: 'hsl(180, 100%, 60%)',
+          fontSize: '10px',
+          fontFamily: 'monospace',
+          fontWeight: 700,
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          marginTop: nodes.length ? '18px' : 0,
+          marginBottom: '6px',
+        }}>
+          {t.replace(/^#{1,3}\s+/, '')}
+        </p>
+      );
+      continue;
+    }
+
+    // Bullet items
+    if (/^[-*]\s/.test(t)) {
+      bullets.push(t.slice(2));
+      continue;
+    }
+
+    // Answer choice line: **A.** or **A)**
+    const choiceMatch = t.match(/^\*\*([A-E])[.)]\*\*\s*(.*)/);
+    if (choiceMatch) {
+      flushBullets();
+      nodes.push(
+        <div key={`ch${k++}`} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', marginBottom: '6px' }}>
+          <span style={{
+            color: 'hsl(56, 100%, 50%)',
+            fontFamily: 'monospace',
+            fontWeight: 700,
+            fontSize: '13px',
+            flexShrink: 0,
+            paddingTop: '1px',
+            minWidth: '18px',
+          }}>
+            {choiceMatch[1]}.
+          </span>
+          <span style={{ color: 'hsl(0, 0%, 80%)', fontSize: '14px', lineHeight: 1.6 }}>
+            {renderInlineBold(choiceMatch[2])}
+          </span>
+        </div>
+      );
+      continue;
+    }
+
+    // Empty line → flush bullets + paragraph spacing
+    if (!t) {
+      flushBullets();
+      if (nodes.length > 0) {
+        nodes.push(<div key={`sp${k++}`} style={{ height: '10px' }} />);
+      }
+      continue;
+    }
+
+    // Regular paragraph
+    flushBullets();
+    nodes.push(
+      <p key={`p${k++}`} style={{ color: 'hsl(0, 0%, 85%)', fontSize: '14px', lineHeight: 1.6, marginBottom: '6px' }}>
+        {renderInlineBold(t)}
+      </p>
+    );
+  }
+
+  flushBullets();
+  return <div>{nodes}</div>;
+}
+
+// ---- End explanation renderer ----
+
 const BLOOMS_STEPS = ['REM', 'UND', 'APP', 'ANL', 'EVL', 'CRT'];
 const BLOOMS_FULL = ['Remember', 'Understand', 'Apply', 'Analyze', 'Evaluate', 'Create'];
 
@@ -176,9 +288,37 @@ export default function Practice() {
       if (isCorrect) {
         setFlashColor('hsl(152, 100%, 50%)');
         store.setPracticeState('correct');
+        // Show explanation even on correct retry so the user can learn from it
+        if (!explanation) {
+          try {
+            const expResult = await api.generateExplanation(
+              store.currentQuestion.question_id,
+              store.currentQuestion,
+              '',
+              false
+            );
+            setExplanation(typeof expResult === 'string' ? expResult : expResult?.explanation || '');
+          } catch {
+            // silent fail
+          }
+        }
       } else {
         setFlashColor('hsl(345, 100%, 60%)');
         store.setPracticeState('wrong');
+        // Always ensure explanation is available in the 'wrong' state
+        if (!explanation) {
+          try {
+            const expResult = await api.generateExplanation(
+              store.currentQuestion.question_id,
+              store.currentQuestion,
+              store.selectedChoice || '',
+              false
+            );
+            setExplanation(typeof expResult === 'string' ? expResult : expResult?.explanation || '');
+          } catch {
+            // silent fail — card still renders without explanation
+          }
+        }
       }
       setTimeout(() => setFlashColor(null), 300);
     } catch (err) {
@@ -480,6 +620,21 @@ export default function Practice() {
               <span className="text-muted-foreground">🔥 <AnimatedNumber value={store.streak} className="text-foreground" /></span>
             </div>
           </div>
+
+          {explanation && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="glass-card rounded-lg p-5 mb-4"
+              style={{ borderLeftWidth: '3px', borderLeftColor: 'hsl(180, 100%, 50%)' }}
+            >
+              <h4 className="font-mono text-xs font-bold tracking-widest mb-4" style={{ color: 'hsl(180, 100%, 60%)' }}>
+                LOGIC PATCH NOTES
+              </h4>
+              <ExplanationMarkdown text={typeof explanation === 'string' ? explanation : JSON.stringify(explanation)} />
+            </motion.div>
+          )}
+
           <button
             className="w-full py-3 rounded-lg rainbow-btn font-heading text-sm uppercase tracking-widest glow-hover flex items-center justify-center gap-2"
             onClick={handleNext}
@@ -605,11 +760,12 @@ export default function Practice() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               className="glass-card rounded-lg p-5 mb-4"
+              style={{ borderLeftWidth: '3px', borderLeftColor: 'hsl(180, 100%, 50%)' }}
             >
-              <h4 className="font-heading text-sm text-primary tracking-wider mb-3">LOGIC PATCH NOTES</h4>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                {typeof explanation === 'string' ? explanation : JSON.stringify(explanation)}
-              </p>
+              <h4 className="font-mono text-xs font-bold tracking-widest mb-4" style={{ color: 'hsl(180, 100%, 60%)' }}>
+                LOGIC PATCH NOTES
+              </h4>
+              <ExplanationMarkdown text={typeof explanation === 'string' ? explanation : JSON.stringify(explanation)} />
             </motion.div>
           )}
 
