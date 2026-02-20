@@ -437,7 +437,7 @@ class TestGoalsAPI(unittest.TestCase):
         self.assertIn("current_gmat_score", data)
         self.assertIn("score_gap", data)
         self.assertIn("estimated_questions_remaining", data)
-        self.assertIn("daily_goal", data)
+        self.assertIn("daily_question_goal", data)
         self.assertIn("today_completed", data)
         self.assertIn("today_progress_pct", data)
         self.assertIn("on_track", data)
