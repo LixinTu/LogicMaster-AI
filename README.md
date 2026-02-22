@@ -6,180 +6,180 @@
 
 ---
 
-## 1. 项目概述
+## 1. Project Overview
 
-LogicMaster AI 是一个面向 GMAT Critical Reasoning 备考的**全栈自适应学习平台**。
+LogicMaster AI is a **full-stack adaptive learning platform** for GMAT Critical Reasoning preparation.
 
-**解决的核心问题：**
-- 传统刷题平台题目固定、难度不自适应，效率低
-- 答错后缺乏个性化引导，只给答案不解释逻辑
-- 无法追踪学生真实的认知薄弱点和遗忘规律
+**Core problems solved:**
+- Traditional practice platforms use fixed questions with no adaptive difficulty, resulting in poor efficiency
+- After answering incorrectly, students receive no personalized guidance — just answers without logical explanation
+- No way to track students' true cognitive weak points and forgetting patterns
 
-**解决方案：**
-- 基于 IRT 3PL 模型实时估算学生能力值（θ），动态调整题目难度
-- 答错时触发 Socratic AI 导师，通过苏格拉底式对话引导学生发现错误逻辑，永不直接给答案
-- Deep Knowledge Tracing（DKT LSTM）追踪每个技能维度的掌握程度
-- Half-Life Regression 遗忘曲线计算最佳复习时机
-
----
-
-## 2. 技术栈
-
-| 层级 | 技术 |
-|------|------|
-| **前端** | React 18, TypeScript, Vite, Tailwind CSS, Zustand, Framer Motion, Recharts, Lucide |
-| **后端** | FastAPI, Python 3.12, Pydantic v2, LangChain, Uvicorn |
-| **AI / LLM** | DeepSeek API（LLM 推理）, LangChain-OpenAI 封装 |
-| **向量检索** | OpenAI `text-embedding-3-small` (1536 dims), Qdrant 向量数据库 |
-| **ML 算法** | IRT 3PL, Thompson Sampling, DKT LSTM (PyTorch), Half-Life Regression, BKT, Bloom's Taxonomy |
-| **数据库** | SQLite（业务数据）, Qdrant（向量索引） |
-| **认证** | JWT（PyJWT 7天有效期）, bcrypt 密码哈希 |
-| **测试** | pytest — 297 个测试用例，100% 通过 |
-| **部署** | AWS EC2（后端）, AWS S3 + CloudFront（前端静态）, Nginx 反向代理, systemd |
-| **容器** | Docker Compose（本地开发：Qdrant + Backend + Frontend） |
+**Solution:**
+- IRT 3PL model estimates student ability (θ) in real time and dynamically adjusts question difficulty
+- When a student answers incorrectly, the Socratic AI tutor guides them to discover their logical errors through dialogue — never revealing the answer directly
+- Deep Knowledge Tracing (DKT LSTM) tracks mastery across each skill dimension
+- Half-Life Regression forgetting curve calculates optimal review timing
 
 ---
 
-## 3. 项目目录结构
+## 2. Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| **Frontend** | React 18, TypeScript, Vite, Tailwind CSS, Zustand, Framer Motion, Recharts, Lucide |
+| **Backend** | FastAPI, Python 3.12, Pydantic v2, LangChain, Uvicorn |
+| **AI / LLM** | DeepSeek API (LLM inference), LangChain-OpenAI wrapper |
+| **Vector Search** | OpenAI `text-embedding-3-small` (1536 dims), Qdrant vector database |
+| **ML Algorithms** | IRT 3PL, Thompson Sampling, DKT LSTM (PyTorch), Half-Life Regression, BKT, Bloom's Taxonomy |
+| **Database** | SQLite (application data), Qdrant (vector index) |
+| **Authentication** | JWT (PyJWT, 7-day expiry), bcrypt password hashing |
+| **Testing** | pytest — 297 test cases, 100% passing |
+| **Deployment** | AWS EC2 (backend), AWS S3 + CloudFront (frontend static), Nginx reverse proxy, systemd |
+| **Containers** | Docker Compose (local dev: Qdrant + Backend + Frontend) |
+
+---
+
+## 3. Project Directory Structure
 
 ```
 mathquest_logicmaster/
 │
-├── frontend/                        # React + TypeScript 前端
+├── frontend/                        # React + TypeScript frontend
 │   ├── src/
-│   │   ├── pages/                   # 页面组件
-│   │   │   ├── Login.tsx            # 登录/注册页
-│   │   │   ├── Dashboard.tsx        # 学习仪表盘
-│   │   │   ├── Practice.tsx         # 刷题页（核心交互）
-│   │   │   ├── WrongBook.tsx        # 错题本
-│   │   │   ├── Review.tsx           # 间隔重复复习页
-│   │   │   ├── Analytics.tsx        # 学习分析图表
-│   │   │   ├── Profile.tsx          # 用户资料
-│   │   │   └── Settings.tsx         # 设置页
-│   │   ├── components/              # 可复用 UI 组件
+│   │   ├── pages/                   # Page components
+│   │   │   ├── Login.tsx            # Login / registration page
+│   │   │   ├── Dashboard.tsx        # Learning dashboard
+│   │   │   ├── Practice.tsx         # Practice page (core interaction)
+│   │   │   ├── WrongBook.tsx        # Wrong answers notebook
+│   │   │   ├── Review.tsx           # Spaced repetition review page
+│   │   │   ├── Analytics.tsx        # Learning analytics charts
+│   │   │   ├── Profile.tsx          # User profile
+│   │   │   └── Settings.tsx         # Settings page
+│   │   ├── components/              # Reusable UI components
 │   │   ├── lib/
-│   │   │   ├── api.ts               # API 客户端（封装所有 HTTP 请求）
-│   │   │   └── config.ts            # API_BASE_URL 配置
+│   │   │   ├── api.ts               # API client (wraps all HTTP requests)
+│   │   │   └── config.ts            # API_BASE_URL configuration
 │   │   ├── store/
-│   │   │   ├── useAppStore.ts       # Zustand 全局状态（题目/答题进度）
-│   │   │   └── useAuthStore.ts      # Zustand 认证状态（JWT token）
-│   │   └── hooks/                   # 自定义 React Hooks
-│   ├── .env.production              # 生产环境变量（VITE_API_BASE_URL）
-│   ├── vite.config.ts               # Vite 配置
+│   │   │   ├── useAppStore.ts       # Zustand global state (questions / progress)
+│   │   │   └── useAuthStore.ts      # Zustand auth state (JWT token)
+│   │   └── hooks/                   # Custom React hooks
+│   ├── .env.production              # Production env vars (VITE_API_BASE_URL)
+│   ├── vite.config.ts               # Vite configuration
 │   └── package.json
 │
-├── backend/                         # FastAPI 后端
-│   ├── main.py                      # 应用入口：CORS、路由注册、/health
-│   ├── config.py                    # pydantic-settings 配置（读取 .env）
-│   ├── Dockerfile                   # 后端容器镜像
-│   ├── pytest.ini                   # pytest 配置
+├── backend/                         # FastAPI backend
+│   ├── main.py                      # App entry: CORS, router registration, /health
+│   ├── config.py                    # pydantic-settings config (reads .env)
+│   ├── Dockerfile                   # Backend container image
+│   ├── pytest.ini                   # pytest configuration
 │   ├── routers/
-│   │   ├── auth.py                  # /api/auth — 注册/登录/资料/统计
-│   │   ├── questions.py             # /api/questions — 自适应选题/bandit/复习
-│   │   ├── tutor.py                 # /api/tutor — Socratic 导师对话
-│   │   ├── explanations.py          # /api/explanations — RAG 解析生成
-│   │   ├── analytics.py             # /api/analytics — A/B 测试/学习分析
-│   │   ├── dashboard.py             # /api/dashboard — 仪表盘统计
-│   │   ├── bookmarks.py             # /api/bookmarks — 收藏/错题本
-│   │   ├── goals.py                 # /api/goals — 学习目标
-│   │   └── theta.py                 # /api/theta — IRT 能力值更新
+│   │   ├── auth.py                  # /api/auth — register / login / profile / stats
+│   │   ├── questions.py             # /api/questions — adaptive selection / bandit / review
+│   │   ├── tutor.py                 # /api/tutor — Socratic tutor conversation
+│   │   ├── explanations.py          # /api/explanations — RAG explanation generation
+│   │   ├── analytics.py             # /api/analytics — A/B testing / learning analytics
+│   │   ├── dashboard.py             # /api/dashboard — dashboard statistics
+│   │   ├── bookmarks.py             # /api/bookmarks — bookmarks / wrong answers
+│   │   ├── goals.py                 # /api/goals — learning goals
+│   │   └── theta.py                 # /api/theta — IRT ability update
 │   ├── services/
-│   │   ├── auth_service.py          # JWT 签发/验证，bcrypt 哈希
-│   │   ├── rag_service.py           # RAGService：Qdrant 嵌入检索
-│   │   ├── explanation_service.py   # 3-tier fallback：缓存→RAG→纯LLM
-│   │   ├── tutor_agent.py           # SocraticTutorAgent（LangChain Agent）
-│   │   ├── conversation_manager.py  # 多轮对话状态管理 + Bloom's 追踪
-│   │   ├── ab_testing.py            # A/B 测试框架（确定性分组 + 日志）
-│   │   └── email_service.py         # SMTP 每日提醒邮件服务
+│   │   ├── auth_service.py          # JWT issuance / verification, bcrypt hashing
+│   │   ├── rag_service.py           # RAGService: Qdrant embedding retrieval
+│   │   ├── explanation_service.py   # 3-tier fallback: cache → RAG → plain LLM
+│   │   ├── tutor_agent.py           # SocraticTutorAgent (LangChain Agent)
+│   │   ├── conversation_manager.py  # Multi-turn conversation state + Bloom's tracking
+│   │   ├── ab_testing.py            # A/B testing framework (deterministic assignment + logging)
+│   │   └── email_service.py         # SMTP daily reminder email service
 │   ├── ml/
-│   │   ├── rag_evaluator.py         # RAG 评估：Precision@K, Recall@K, MRR, F1@K
-│   │   └── llm_evaluator.py         # LLM-as-Judge 解析质量评分
-│   └── tests/                       # 297 个 pytest 测试
-│       ├── test_api.py              # 基础 API 测试（16个）
-│       ├── test_rag.py              # RAG 系统测试（21个）
-│       ├── test_tutor_agent.py      # 导师 Agent 测试（26个）
-│       ├── test_blooms_taxonomy.py  # Bloom's 分类测试（15个）
-│       ├── test_ab_testing.py       # A/B 测试框架测试（20个）
-│       ├── test_bandit.py           # Thompson Sampling 测试（24个）
-│       ├── test_spaced_repetition.py # 间隔重复测试（20个）
-│       ├── test_dkt.py              # DKT 模型测试（39个）
-│       ├── test_irt_3pl.py          # IRT 3PL 测试（18个）
-│       ├── test_features.py         # 功能测试（51个）：仪表盘/书签/目标/邮件
-│       └── test_auth.py             # 认证测试（44个）
+│   │   ├── rag_evaluator.py         # RAG evaluation: Precision@K, Recall@K, MRR, F1@K
+│   │   └── llm_evaluator.py         # LLM-as-Judge explanation quality scoring
+│   └── tests/                       # 297 pytest tests
+│       ├── test_api.py              # Basic API tests (16)
+│       ├── test_rag.py              # RAG system tests (21)
+│       ├── test_tutor_agent.py      # Tutor agent tests (26)
+│       ├── test_blooms_taxonomy.py  # Bloom's taxonomy tests (15)
+│       ├── test_ab_testing.py       # A/B testing framework tests (20)
+│       ├── test_bandit.py           # Thompson Sampling tests (24)
+│       ├── test_spaced_repetition.py # Spaced repetition tests (20)
+│       ├── test_dkt.py              # DKT model tests (39)
+│       ├── test_irt_3pl.py          # IRT 3PL tests (18)
+│       ├── test_features.py         # Feature tests (51): dashboard / bookmarks / goals / email
+│       └── test_auth.py             # Authentication tests (44)
 │
-├── engine/                          # 核心 ML 引擎（无 FastAPI 依赖）
-│   ├── scoring.py                   # IRT 3PL：probability_3pl, calculate_new_theta, estimate_gmat_score
-│   ├── bandit_selector.py           # Thompson Sampling 选题器（Beta 分布 + SQLite）
-│   ├── spaced_repetition.py         # Half-Life Regression 遗忘曲线
-│   ├── skill_encoder.py             # SkillEncoder：技能↔向量编码（DKT 输入）
-│   ├── dkt_model.py                 # DKTModelNumpy（冷启动）+ DKTModelLSTM（PyTorch）
-│   ├── recommender.py               # 推荐 pipeline：BKT/DKT → SR注入 → Bandit选题
-│   └── __init__.py                  # SkillEncoder/get_dkt_model 导出
+├── engine/                          # Core ML engine (no FastAPI dependency)
+│   ├── scoring.py                   # IRT 3PL: probability_3pl, calculate_new_theta, estimate_gmat_score
+│   ├── bandit_selector.py           # Thompson Sampling question selector (Beta dist + SQLite)
+│   ├── spaced_repetition.py         # Half-Life Regression forgetting curve
+│   ├── skill_encoder.py             # SkillEncoder: skill ↔ vector encoding (DKT input)
+│   ├── dkt_model.py                 # DKTModelNumpy (cold start) + DKTModelLSTM (PyTorch)
+│   ├── recommender.py               # Recommendation pipeline: BKT/DKT → SR injection → Bandit selection
+│   └── __init__.py                  # SkillEncoder / get_dkt_model exports
 │
 ├── utils/
-│   └── db_handler.py                # DatabaseManager：SQLite schema + 所有 DB 操作
+│   └── db_handler.py                # DatabaseManager: SQLite schema + all DB operations
 │
 ├── scripts/
-│   ├── train_dkt.py                 # DKT 模型训练（argparse，用户级分割，早停）
-│   ├── index_to_rag.py              # 批量索引 SQLite → Qdrant
-│   ├── analyze_ab_tests.py          # A/B 统计分析（t-test，Cohen's d）
-│   ├── evaluate_llm_quality.py      # 批量 LLM 解析质量评估
-│   └── send_reminders.py            # 每日提醒邮件 cron 脚本
+│   ├── train_dkt.py                 # DKT model training (argparse, user-level split, early stopping)
+│   ├── index_to_rag.py              # Batch index SQLite → Qdrant
+│   ├── analyze_ab_tests.py          # A/B statistical analysis (t-test, Cohen's d)
+│   ├── evaluate_llm_quality.py      # Batch LLM explanation quality evaluation
+│   └── send_reminders.py            # Daily reminder email cron script
 │
 ├── docs/
-│   ├── api.md                       # 完整 API 端点参考文档
-│   ├── demo_script.md               # 5 分钟 Demo 演示脚本
-│   └── resume_bullet_points.md      # 简历要点
+│   ├── api.md                       # Complete API endpoint reference
+│   ├── demo_script.md               # 5-minute demo walkthrough script
+│   └── resume_bullet_points.md      # Resume bullet points
 │
-├── app.py                           # 旧版 Streamlit 前端（保留，已被 React 替代）
-├── llm_service.py                   # DeepSeek LLM 封装（tutor_reply 向后兼容）
-├── logicmaster.db                   # SQLite 数据库（~50题，生产约 421KB）
-├── docker-compose.yml               # 本地开发：Qdrant + Backend + Frontend
-├── Dockerfile.streamlit             # Streamlit 前端容器（旧版）
-├── .env                             # 本地环境变量（不提交 git）
-├── .env.example                     # 环境变量模板
-├── requirements-backend.txt         # Python 后端依赖
-└── requirements.txt                 # 旧版 Streamlit 依赖
+├── app.py                           # Legacy Streamlit frontend (retained, superseded by React)
+├── llm_service.py                   # DeepSeek LLM wrapper (tutor_reply backward compat)
+├── logicmaster.db                   # SQLite database (~50 questions, ~421KB in production)
+├── docker-compose.yml               # Local dev: Qdrant + Backend + Frontend
+├── Dockerfile.streamlit             # Streamlit frontend container (legacy)
+├── .env                             # Local environment variables (not committed to git)
+├── .env.example                     # Environment variable template
+├── requirements-backend.txt         # Python backend dependencies
+└── requirements.txt                 # Legacy Streamlit dependencies
 ```
 
 ---
 
-## 4. 环境变量
+## 4. Environment Variables
 
-复制 `.env.example` 为 `.env` 并填写：
+Copy `.env.example` to `.env` and fill in the values:
 
 ```dotenv
-# ===== 必填：LLM API Keys =====
+# ===== Required: LLM API Keys =====
 DEEPSEEK_API_KEY=sk-your-deepseek-key-here
 OPENAI_API_KEY=sk-your-openai-key-here
 
-# ===== Qdrant 向量数据库（Docker 默认值可不改）=====
+# ===== Qdrant Vector Database (Docker defaults, no change needed) =====
 QDRANT_HOST=localhost
 QDRANT_PORT=6333
 QDRANT_COLLECTION=gmat_explanations
 
-# ===== OpenAI Embedding 配置 =====
+# ===== OpenAI Embedding Config =====
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_EMBEDDING_DIMS=1536
 
-# ===== JWT 认证（生产环境必须修改 SECRET！）=====
+# ===== JWT Authentication (MUST change SECRET in production!) =====
 JWT_SECRET_KEY=glitchmind-secret-key-change-in-production
 JWT_ALGORITHM=HS256
 JWT_EXPIRE_DAYS=7
 
-# ===== SMTP 邮件提醒（可选，留空则不发送）=====
+# ===== SMTP Email Reminders (optional, leave blank to disable) =====
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_EMAIL=your-email@gmail.com
 SMTP_PASSWORD=your-app-password
 
-# ===== 应用配置 =====
+# ===== Application Config =====
 APP_ENV=development        # development | production
 DEBUG=True
-DAILY_QUESTION_GOAL=5      # 默认每日目标题数
+DAILY_QUESTION_GOAL=5      # Default daily question target
 ```
 
-前端生产环境变量（`frontend/.env.production`）：
+Frontend production environment variable (`frontend/.env.production`):
 
 ```dotenv
 VITE_API_BASE_URL=https://api.glitchmind.io
@@ -187,122 +187,122 @@ VITE_API_BASE_URL=https://api.glitchmind.io
 
 ---
 
-## 5. 本地开发启动步骤
+## 5. Local Development Setup
 
-### 前置条件
+### Prerequisites
 
 - Python 3.11+
 - Node.js 18+
-- Docker（用于 Qdrant）
+- Docker (for Qdrant)
 - `DEEPSEEK_API_KEY` + `OPENAI_API_KEY`
 
-### 后端启动
+### Backend
 
 ```bash
-# 1. 克隆项目
+# 1. Clone the repository
 git clone <repo-url>
 cd mathquest_logicmaster
 
-# 2. 配置环境变量
+# 2. Configure environment variables
 cp .env.example .env
-# 编辑 .env，填入 API keys
+# Edit .env and fill in API keys
 
-# 3. 安装 Python 依赖（建议使用虚拟环境）
+# 3. Install Python dependencies (virtual environment recommended)
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements-backend.txt
 
-# 4. 启动 Qdrant（Docker）
+# 4. Start Qdrant (Docker)
 docker-compose up -d qdrant
 
-# 5. 索引题目到向量数据库（首次运行）
+# 5. Index questions into the vector database (first run only)
 python scripts/index_to_rag.py
 
-# 6. 启动 FastAPI 后端
+# 6. Start FastAPI backend
 cd backend
 uvicorn main:app --reload --port 8000
 # Swagger UI: http://localhost:8000/docs
 ```
 
-### 前端启动
+### Frontend
 
 ```bash
 cd frontend
 npm install
 npm run dev
-# 访问: http://localhost:5173
+# Visit: http://localhost:5173
 ```
 
-### 完整 Docker 启动（本地一键）
+### Full Docker Setup (local one-command)
 
 ```bash
 cp .env.example .env
-# 编辑 .env
+# Edit .env
 docker-compose up -d
-# 后端: http://localhost:8000
-# 前端 (Streamlit旧版): http://localhost:8501
+# Backend: http://localhost:8000
+# Frontend (legacy Streamlit): http://localhost:8501
 ```
 
-### 运行测试
+### Running Tests
 
 ```bash
 cd backend
 pytest tests/ -v
-# 预期：297 个测试全部通过
+# Expected: 297 tests, all passing
 ```
 
 ---
 
-## 6. 生产环境部署架构
+## 6. Production Deployment Architecture
 
 ```
-用户浏览器
+User Browser
     │ HTTPS
     ▼
 AWS CloudFront + S3
   (gmat.glitchmind.io)
-  静态文件：React build dist/
+  Static files: React build dist/
     │
-    │ HTTPS API 请求
+    │ HTTPS API requests
     ▼
-Nginx（EC2 上，api.glitchmind.io）
+Nginx (EC2, api.glitchmind.io)
   ┌─────────────────────────────────┐
   │  server { listen 443 ssl; }     │
   │    proxy_pass → 127.0.0.1:8000 │
   │  server { listen 80; }          │
-  │    OPTIONS → 直接 204           │
-  │    其他 → 301 → HTTPS           │
+  │    OPTIONS → direct 204         │
+  │    other   → 301 → HTTPS        │
   └─────────────────────────────────┘
     │
     ▼
-FastAPI（uvicorn，systemd 服务：logicmaster）
-  端口 8000，进程守护
+FastAPI (uvicorn, systemd service: logicmaster)
+  Port 8000, process-managed
     │
     ├── SQLite (logicmaster.db)
-    └── Qdrant（Docker，端口 6333/6334）
+    └── Qdrant (Docker, ports 6333/6334)
 ```
 
-### systemd 服务管理
+### systemd Service Management
 
 ```bash
-# 服务文件位置：/etc/systemd/system/logicmaster.service
+# Service file location: /etc/systemd/system/logicmaster.service
 sudo systemctl start logicmaster
 sudo systemctl stop logicmaster
 sudo systemctl restart logicmaster
 sudo systemctl status logicmaster
 
-# 查看实时日志
+# View live logs
 journalctl -u logicmaster -f
 ```
 
-### Nginx 配置（关键：CORS + OPTIONS 处理）
+### Nginx Configuration (key: CORS + OPTIONS handling)
 
 ```nginx
 server {
     listen 80;
     server_name api.glitchmind.io;
 
-    # OPTIONS preflight 不经过重定向，直接响应
+    # OPTIONS preflight bypasses redirect and responds directly
     if ($request_method = OPTIONS) {
         return 204;
     }
@@ -322,20 +322,20 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        # 注意：不在 Nginx 层添加 CORS 头，由 FastAPI CORSMiddleware 处理
+        # Note: CORS headers are NOT added at the Nginx layer; handled by FastAPI CORSMiddleware
     }
 }
 ```
 
-### 更新部署流程
+### Deployment Update Flow
 
 ```bash
-# 在服务器上执行
+# Run on the server
 cd /path/to/mathquest_logicmaster
 git pull
 sudo systemctl restart logicmaster
 
-# 前端更新（本地构建后上传 S3）
+# Frontend update (build locally, then upload to S3)
 cd frontend
 npm run build
 aws s3 sync dist/ s3://your-bucket-name/ --delete
@@ -344,268 +344,268 @@ aws cloudfront create-invalidation --distribution-id YOUR_DIST_ID --paths "/*"
 
 ---
 
-## 7. API 端点完整列表
+## 7. API Endpoints
 
-**Base URL（生产）：** `https://api.glitchmind.io`
-**Swagger UI：** `https://api.glitchmind.io/docs`
+**Base URL (production):** `https://api.glitchmind.io`
+**Swagger UI:** `https://api.glitchmind.io/docs`
 
 ### Health
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/health` | 服务健康检查（DB + Qdrant 状态） |
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Service health check (DB + Qdrant status) |
 
-### 认证 `/api/auth`
+### Authentication `/api/auth`
 
-| 方法 | 路径 | 认证 | 说明 |
-|------|------|------|------|
-| POST | `/api/auth/register` | 无 | 注册（邮箱+密码），返回 JWT |
-| POST | `/api/auth/login` | 无 | 登录，返回 JWT |
-| GET | `/api/auth/me` | Bearer | 获取当前用户资料 |
-| PUT | `/api/auth/profile` | Bearer | 更新显示名称 |
-| PUT | `/api/auth/change-password` | Bearer | 修改密码 |
-| DELETE | `/api/auth/account` | Bearer | 删除账户及所有数据 |
-| GET | `/api/auth/stats` | Bearer | 获取学习统计（总题数/正确率/最长连击/GMAT估分） |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/auth/register` | None | Register (email + password), returns JWT |
+| POST | `/api/auth/login` | None | Login, returns JWT |
+| GET | `/api/auth/me` | Bearer | Get current user profile |
+| PUT | `/api/auth/profile` | Bearer | Update display name |
+| PUT | `/api/auth/change-password` | Bearer | Change password |
+| DELETE | `/api/auth/account` | Bearer | Delete account and all data |
+| GET | `/api/auth/stats` | Bearer | Get learning stats (total questions / accuracy / best streak / estimated GMAT score) |
 
-### 题目 `/api/questions`
+### Questions `/api/questions`
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/questions/next` | 获取下一道自适应推荐题（支持 `strategy: bandit\|legacy`） |
-| POST | `/api/questions/bandit-update` | 答题后更新 Bandit/SR/DKT/错题本 |
-| GET | `/api/questions/review-schedule` | 获取间隔重复待复习队列 |
-| GET | `/api/questions/{question_id}` | 按 ID 获取指定题目 |
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/questions/next` | Get next adaptive question (`strategy: bandit\|legacy`) |
+| POST | `/api/questions/bandit-update` | Update Bandit / SR / DKT / wrong book after answering |
+| GET | `/api/questions/review-schedule` | Get spaced repetition review queue |
+| GET | `/api/questions/{question_id}` | Get a specific question by ID |
 
-### Socratic 导师 `/api/tutor`
+### Socratic Tutor `/api/tutor`
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/tutor/start-remediation` | 开始导师对话（诊断错误 + 首条提示 + A/B分组） |
-| POST | `/api/tutor/continue` | 继续对话（Bloom's评估 → 下一提示或结论） |
-| POST | `/api/tutor/conclude` | 结束对话，返回总结 |
-| POST | `/api/tutor/chat` | 旧版无状态对话（向后兼容） |
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/tutor/start-remediation` | Start tutor session (diagnose error + first hint + A/B assignment) |
+| POST | `/api/tutor/continue` | Continue session (Bloom's evaluation → next hint or conclusion) |
+| POST | `/api/tutor/conclude` | End session, return summary |
+| POST | `/api/tutor/chat` | Legacy stateless chat (backward compatible) |
 
-### 解析 `/api/explanations`
+### Explanations `/api/explanations`
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/explanations/generate-with-rag` | 生成 RAG 增强解析（3层fallback） |
-| POST | `/api/explanations/search-similar` | 向量搜索相似题目 |
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/explanations/generate-with-rag` | Generate RAG-enhanced explanation (3-tier fallback) |
+| POST | `/api/explanations/search-similar` | Vector search for similar questions |
 
-### 仪表盘 `/api/dashboard`
+### Dashboard `/api/dashboard`
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/dashboard/summary` | 仪表盘汇总（今日进度/连击/theta/GMAT估分/薄弱技能/待复习数） |
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/summary` | Dashboard summary (today's progress / streak / theta / estimated GMAT score / weak skills / reviews due) |
 
-### 收藏/错题本 `/api/bookmarks`
+### Bookmarks / Wrong Book `/api/bookmarks`
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/bookmarks/add` | 添加收藏/错题（幂等） |
-| DELETE | `/api/bookmarks/remove` | 删除书签 |
-| GET | `/api/bookmarks/list` | 查询列表（支持 type/skill 过滤） |
-| GET | `/api/bookmarks/wrong-stats` | 错题统计（按技能/题型分布） |
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/bookmarks/add` | Add bookmark / wrong answer (idempotent) |
+| DELETE | `/api/bookmarks/remove` | Remove bookmark |
+| GET | `/api/bookmarks/list` | Query list (supports type / skill filtering) |
+| GET | `/api/bookmarks/wrong-stats` | Wrong answer statistics (by skill / question type distribution) |
 
-### 学习目标 `/api/goals`
+### Learning Goals `/api/goals`
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/goals/set` | 设置目标 GMAT 分数 + 每日题数 |
-| GET | `/api/goals/progress` | 获取目标进度（分差/估计剩余题数/是否达标） |
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/goals/set` | Set target GMAT score + daily question count |
+| GET | `/api/goals/progress` | Get goal progress (score gap / estimated remaining questions / on-track status) |
 
-### 数据分析 `/api/analytics`
+### Analytics `/api/analytics`
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/analytics/log-outcome` | 记录 A/B 实验结果 |
-| GET | `/api/analytics/ab-test-results` | 获取 A/B 测试聚合统计 |
-| GET | `/api/analytics/summary` | 学习分析汇总（答题历史/错题分析/技能掌握度） |
-| GET | `/api/analytics/rag-performance` | RAG 系统性能指标 |
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/analytics/log-outcome` | Record A/B experiment outcome |
+| GET | `/api/analytics/ab-test-results` | Get A/B test aggregated statistics |
+| GET | `/api/analytics/summary` | Learning analytics summary (answer history / wrong analysis / skill mastery) |
+| GET | `/api/analytics/rag-performance` | RAG system performance metrics |
 
-### IRT 能力值 `/api/theta`
+### IRT Ability `/api/theta`
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/theta/update` | 更新 theta（3PL IRT），返回新 theta + GMAT 估分 |
-
----
-
-## 8. 已实现功能
-
-### 自适应学习引擎
-
-- **IRT 3PL 评分** — 三参数逻辑斯蒂模型（区分度 *a*、难度 *b*、猜测 *c*），MLE 校准（L-BFGS-B），映射到 GMAT Verbal 量表（V20–V51）
-- **Thompson Sampling 选题** — Multi-armed bandit，Beta(α, β) 先验，每次答题后更新；探索与利用自动平衡
-- **Deep Knowledge Tracing** — PyTorch LSTM（Piech et al. 2015）预测各技能掌握度；冷启动（<50交互）自动降级为 numpy logistic regression
-- **Spaced Repetition** — Half-Life Regression（Settles & Meeder 2016）建模遗忘曲线；回忆概率 <0.5 时注入复习题（40%概率）
-- **BKT 技能追踪** — 贝叶斯知识追踪，覆盖 10+ 认知技能（Causal Reasoning, Assumption Identification 等）
-- **混合推荐 Pipeline** — BKT/DKT 薄弱评分 → SR 注入 → Thompson Sampling 最终选题
-
-### AI 导师系统
-
-- **Socratic Tutor** — LangChain Agent（DeepSeek LLM），渐进式提示：gentle（提示1）→ moderate（提示2）→ direct（提示3），永不直接揭示答案
-- **Bloom's Taxonomy 认知评估** — LLM 实时评估学生回答的认知层级（1-6级：Remember → Create），据此调整提示策略
-- **RAG 解析** — Qdrant + OpenAI 嵌入，3层 fallback：缓存命中 → RAG增强 → 纯LLM
-
-### 用户功能
-
-- **JWT 认证** — 注册/登录/资料管理/密码修改/账户注销（7天 token，bcrypt 哈希）
-- **Dashboard** — 实时统计：GMAT 估分、连击天数、theta、薄弱技能、待复习数、7天日历
-- **错题本（Wrong Book）** — 答错自动加入，支持按技能/题型筛选，统计分析
-- **学习目标** — 设置目标 GMAT 分数和每日刷题量，追踪进度和达成情况
-- **学习分析** — 答题历史曲线、错题分布饼图、技能掌握度雷达
-
-### 数据科学基础设施
-
-- **A/B 测试框架** — 确定性变体分配（哈希）；`tutor_strategy`（socratic_standard / socratic_aggressive / direct_explanation）和 `explanation_source`（rag_enhanced / baseline）两个实验；t-test 显著性 + Cohen's d 效应量分析
-- **LLM-as-Judge** — DeepSeek 自动评估解析质量（正确性/清晰度/完整性/教学价值，0-10分）
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/theta/update` | Update theta (3PL IRT), returns new theta + estimated GMAT score |
 
 ---
 
-## 9. 已知问题 / TODO
+## 8. Implemented Features
 
-### 已知问题
+### Adaptive Learning Engine
 
-| 问题 | 状态 | 描述 |
-|------|------|------|
-| CORS 跨域 | 修复中 | Nginx HTTP→HTTPS 重定向拦截 OPTIONS preflight；`backend/main.py` CORS 配置已修正（显式域名白名单），待服务器 `git pull + restart` |
-| `config.ts` fallback URL | 已修复 | 旧版 fallback 使用 `http://`（非 HTTPS），已改为 `https://api.glitchmind.io` |
-| SQLite 并发 | 已知限制 | SQLite 不适合高并发写入；生产规模化需迁移 PostgreSQL |
-| DKT 冷启动 | 已处理 | <50 条交互时自动降级 numpy 模型，但初始推荐质量有限 |
-| Bandit stats 无 user_id | 已知 | `bandit_stats` 表不含 `user_id` 列，Bandit 统计全局共享（非用户级） |
+- **IRT 3PL Scoring** — Three-parameter logistic model (discrimination *a*, difficulty *b*, guessing *c*), MLE calibration (L-BFGS-B), mapped to GMAT Verbal scale (V20–V51)
+- **Thompson Sampling Question Selection** — Multi-armed bandit, Beta(α, β) prior, updated after each answer; automatic explore/exploit balance
+- **Deep Knowledge Tracing** — PyTorch LSTM (Piech et al. 2015) predicts skill mastery per dimension; cold start (<50 interactions) automatically falls back to numpy logistic regression
+- **Spaced Repetition** — Half-Life Regression (Settles & Meeder 2016) models the forgetting curve; injects review questions when recall probability < 0.5 (40% injection rate)
+- **BKT Skill Tracking** — Bayesian Knowledge Tracing covering 10+ cognitive skills (Causal Reasoning, Assumption Identification, etc.)
+- **Hybrid Recommendation Pipeline** — BKT/DKT weakness scoring → SR injection → Thompson Sampling final selection
+
+### AI Tutor System
+
+- **Socratic Tutor** — LangChain Agent (DeepSeek LLM), progressive hints: gentle (hint 1) → moderate (hint 2) → direct (hint 3), never reveals the answer directly
+- **Bloom's Taxonomy Cognitive Evaluation** — LLM evaluates students' cognitive level in real time (levels 1–6: Remember → Create) and adjusts hint strategy accordingly
+- **RAG Explanations** — Qdrant + OpenAI embeddings, 3-tier fallback: cache hit → RAG-enhanced → plain LLM
+
+### User Features
+
+- **JWT Authentication** — Register / login / profile management / password change / account deletion (7-day token, bcrypt hashing)
+- **Dashboard** — Real-time stats: estimated GMAT score, streak days, theta, weak skills, reviews due, 7-day calendar
+- **Wrong Book** — Wrong answers added automatically; supports filtering by skill / question type with statistical analysis
+- **Learning Goals** — Set target GMAT score and daily question count; track progress and achievement
+- **Learning Analytics** — Answer history curve, wrong answer distribution pie chart, skill mastery radar
+
+### Data Science Infrastructure
+
+- **A/B Testing Framework** — Deterministic variant assignment (hash-based); two experiments: `tutor_strategy` (socratic_standard / socratic_aggressive / direct_explanation) and `explanation_source` (rag_enhanced / baseline); t-test significance + Cohen's d effect size analysis
+- **LLM-as-Judge** — DeepSeek automatically evaluates explanation quality (correctness / clarity / completeness / pedagogical value, 0–10)
+
+---
+
+## 9. Known Issues / TODO
+
+### Known Issues
+
+| Issue | Status | Description |
+|-------|--------|-------------|
+| CORS | In progress | Nginx HTTP→HTTPS redirect intercepts OPTIONS preflight; `backend/main.py` CORS config corrected (explicit domain allowlist), pending `git pull + restart` on server |
+| `config.ts` fallback URL | Fixed | Legacy fallback used `http://` (non-HTTPS); changed to `https://api.glitchmind.io` |
+| SQLite concurrency | Known limitation | SQLite is not suitable for high-concurrency writes; production scaling requires migration to PostgreSQL |
+| DKT cold start | Handled | Automatically falls back to numpy model when <50 interactions, but initial recommendation quality is limited |
+| Bandit stats no user_id | Known | `bandit_stats` table has no `user_id` column; Bandit statistics are globally shared (not per-user) |
 
 ### TODO
 
-- [ ] PostgreSQL 迁移（替代 SQLite）
-- [ ] 题库扩充（当前约 50 题）
-- [ ] 用户级 Bandit 统计（当前全局共享）
-- [ ] 题目生成 Pipeline（LLM 自动出题 + 人工审核）
-- [ ] 移动端适配优化
-- [ ] DKT 模型定期在线学习（目前离线训练）
-- [ ] Qdrant 持久化备份方案
-- [ ] Rate limiting（当前无请求限制）
+- [ ] PostgreSQL migration (replace SQLite)
+- [ ] Expand question bank (currently ~50 questions)
+- [ ] Per-user Bandit statistics (currently globally shared)
+- [ ] Question generation pipeline (LLM auto-generation + human review)
+- [ ] Mobile layout optimization
+- [ ] DKT model periodic online learning (currently offline training)
+- [ ] Qdrant persistent backup solution
+- [ ] Rate limiting (no request limits currently)
 
 ---
 
-## 10. 数据库结构概述
+## 10. Database Schema Overview
 
-数据库文件：`logicmaster.db`（SQLite）
+Database file: `logicmaster.db` (SQLite)
 
-### `questions` — 题库
+### `questions` — Question Bank
 
-| 列 | 类型 | 说明 |
-|----|------|------|
-| `id` | TEXT PK | 题目唯一 ID |
-| `question_type` | TEXT | 题型（Weaken/Strengthen/Assumption/Inference/Flaw/Evaluate/Boldface） |
-| `difficulty` | TEXT | 难度（easy/medium/hard） |
-| `content` | TEXT | 题目 JSON（stimulus, question, choices, correct, skills, explanation） |
-| `elo_difficulty` | REAL | IRT 难度参数 b（默认 1500.0） |
-| `is_verified` | INTEGER | 是否审核通过（1=通过，仅已验证题目参与推荐） |
-| `discrimination` | REAL | 3PL 区分度参数 a（默认 1.0） |
-| `guessing` | REAL | 3PL 猜测参数 c（默认 0.2） |
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | TEXT PK | Unique question ID |
+| `question_type` | TEXT | Type (Weaken / Strengthen / Assumption / Inference / Flaw / Evaluate / Boldface) |
+| `difficulty` | TEXT | Difficulty (easy / medium / hard) |
+| `content` | TEXT | Question JSON (stimulus, question, choices, correct, skills, explanation) |
+| `elo_difficulty` | REAL | IRT difficulty parameter b (default 1500.0) |
+| `is_verified` | INTEGER | Review status (1 = approved; only verified questions are recommended) |
+| `discrimination` | REAL | 3PL discrimination parameter a (default 1.0) |
+| `guessing` | REAL | 3PL guessing parameter c (default 0.2) |
 
-### `users` — 用户账户
+### `users` — User Accounts
 
-| 列 | 类型 | 说明 |
-|----|------|------|
+| Column | Type | Description |
+|--------|------|-------------|
 | `id` | TEXT PK | UUID |
-| `email` | TEXT UNIQUE | 邮箱（唯一索引） |
-| `password_hash` | TEXT | bcrypt 哈希 |
-| `display_name` | TEXT | 显示名称（可选） |
-| `created_at` | TIMESTAMP | 注册时间 |
+| `email` | TEXT UNIQUE | Email (unique index) |
+| `password_hash` | TEXT | bcrypt hash |
+| `display_name` | TEXT | Display name (optional) |
+| `created_at` | TIMESTAMP | Registration time |
 
-### `answer_history` — 答题历史（DKT 训练数据）
+### `answer_history` — Answer History (DKT training data)
 
-| 列 | 类型 | 说明 |
-|----|------|------|
-| `id` | INTEGER PK | 自增 |
-| `user_id` | TEXT | 用户 ID（默认 "default"） |
-| `question_id` | TEXT | 题目 ID |
-| `skill_ids` | TEXT | 技能列表 JSON |
-| `is_correct` | INTEGER | 0/1 |
-| `theta_at_time` | REAL | 答题时的 theta 值 |
-| `created_at` | TIMESTAMP | 答题时间（索引：user_id + created_at） |
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Auto-increment |
+| `user_id` | TEXT | User ID (default "default") |
+| `question_id` | TEXT | Question ID |
+| `skill_ids` | TEXT | Skill list JSON |
+| `is_correct` | INTEGER | 0 / 1 |
+| `theta_at_time` | REAL | Theta value at time of answer |
+| `created_at` | TIMESTAMP | Answer timestamp (indexed: user_id + created_at) |
 
-### `spaced_repetition_stats` — 间隔重复统计
+### `spaced_repetition_stats` — Spaced Repetition Statistics
 
-| 列 | 类型 | 说明 |
-|----|------|------|
-| `user_id` | TEXT | 用户 ID（联合主键） |
-| `question_id` | TEXT | 题目 ID（联合主键） |
-| `half_life` | REAL | 记忆半衰期（天数） |
-| `last_practiced` | TIMESTAMP | 最后练习时间 |
-| `n_correct` | INTEGER | 答对次数 |
-| `n_attempts` | INTEGER | 总尝试次数 |
+| Column | Type | Description |
+|--------|------|-------------|
+| `user_id` | TEXT | User ID (composite PK) |
+| `question_id` | TEXT | Question ID (composite PK) |
+| `half_life` | REAL | Memory half-life (days) |
+| `last_practiced` | TIMESTAMP | Last practice time |
+| `n_correct` | INTEGER | Number of correct answers |
+| `n_attempts` | INTEGER | Total attempts |
 
-### `bookmarks` — 收藏/错题本
+### `bookmarks` — Bookmarks / Wrong Book
 
-| 列 | 类型 | 说明 |
-|----|------|------|
-| `user_id` | TEXT | 用户 ID（联合主键） |
-| `question_id` | TEXT | 题目 ID（联合主键） |
-| `bookmark_type` | TEXT | "favorite" 或 "wrong"（联合主键） |
-| `created_at` | TIMESTAMP | 添加时间 |
+| Column | Type | Description |
+|--------|------|-------------|
+| `user_id` | TEXT | User ID (composite PK) |
+| `question_id` | TEXT | Question ID (composite PK) |
+| `bookmark_type` | TEXT | "favorite" or "wrong" (composite PK) |
+| `created_at` | TIMESTAMP | Time added |
 
-### `learning_goals` — 学习目标
+### `learning_goals` — Learning Goals
 
-| 列 | 类型 | 说明 |
-|----|------|------|
-| `user_id` | TEXT PK | 用户 ID |
-| `target_gmat_score` | INTEGER | 目标 GMAT 分（20-51） |
-| `daily_question_goal` | INTEGER | 每日目标题数 |
-| `created_at` / `updated_at` | TIMESTAMP | 创建/更新时间 |
+| Column | Type | Description |
+|--------|------|-------------|
+| `user_id` | TEXT PK | User ID |
+| `target_gmat_score` | INTEGER | Target GMAT score (20–51) |
+| `daily_question_goal` | INTEGER | Daily question target |
+| `created_at` / `updated_at` | TIMESTAMP | Created / updated time |
 
-### `experiment_logs` — A/B 测试日志
+### `experiment_logs` — A/B Test Logs
 
-| 列 | 类型 | 说明 |
-|----|------|------|
-| `id` | INTEGER PK | 自增 |
-| `user_id` | TEXT | 用户 ID |
-| `experiment_name` | TEXT | 实验名（tutor_strategy / explanation_source） |
-| `variant` | TEXT | 变体名 |
-| `event_type` | TEXT | "exposure" 或 "outcome" |
-| `outcome_metric` | TEXT | 指标名（is_correct, theta_gain 等） |
-| `outcome_value` | REAL | 指标数值 |
-| `created_at` | TIMESTAMP | 记录时间 |
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Auto-increment |
+| `user_id` | TEXT | User ID |
+| `experiment_name` | TEXT | Experiment name (tutor_strategy / explanation_source) |
+| `variant` | TEXT | Variant name |
+| `event_type` | TEXT | "exposure" or "outcome" |
+| `outcome_metric` | TEXT | Metric name (is_correct, theta_gain, etc.) |
+| `outcome_value` | REAL | Metric value |
+| `created_at` | TIMESTAMP | Record time |
 
-### `email_logs` — 邮件发送记录
+### `email_logs` — Email Send Records
 
-| 列 | 类型 | 说明 |
-|----|------|------|
-| `id` | INTEGER PK | 自增 |
-| `user_id` | TEXT | 用户 ID |
-| `email_type` | TEXT | 邮件类型 |
-| `sent_at` | TIMESTAMP | 发送时间（24h 去重依据） |
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Auto-increment |
+| `user_id` | TEXT | User ID |
+| `email_type` | TEXT | Email type |
+| `sent_at` | TIMESTAMP | Send time (24h dedup basis) |
 
-### `bandit_stats`（engine SQLite，独立于 users）— Thompson Sampling 统计
+### `bandit_stats` (engine SQLite, independent of users) — Thompson Sampling Statistics
 
-| 列 | 类型 | 说明 |
-|----|------|------|
-| `question_id` | TEXT PK | 题目 ID |
-| `alpha` | REAL | Beta 分布 α 参数（成功次数 + 1） |
-| `beta` | REAL | Beta 分布 β 参数（失败次数 + 1） |
-| `n_trials` | INTEGER | 总选取次数 |
-| `n_successes` | INTEGER | 答对次数 |
+| Column | Type | Description |
+|--------|------|-------------|
+| `question_id` | TEXT PK | Question ID |
+| `alpha` | REAL | Beta distribution α parameter (successes + 1) |
+| `beta` | REAL | Beta distribution β parameter (failures + 1) |
+| `n_trials` | INTEGER | Total selection count |
+| `n_successes` | INTEGER | Correct answer count |
 
 ---
 
-## 评估脚本
+## Evaluation Scripts
 
 ```bash
-# 训练 DKT 模型（自动选择 LSTM 或 numpy）
+# Train DKT model (automatically selects LSTM or numpy)
 python scripts/train_dkt.py --epochs 10 --compare
 
-# 重新索引题目到 Qdrant
+# Re-index questions into Qdrant
 python scripts/index_to_rag.py --force
 
-# A/B 测试统计分析（显著性 + 效应量）
+# A/B test statistical analysis (significance + effect size)
 python scripts/analyze_ab_tests.py
 
-# LLM 解析质量评估
+# LLM explanation quality evaluation
 python scripts/evaluate_llm_quality.py
 
-# 手动发送每日提醒邮件
+# Manually send daily reminder emails
 python scripts/send_reminders.py
 ```
 
