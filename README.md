@@ -1,8 +1,16 @@
 # LogicMaster AI
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-gmat.glitchmind.io-brightgreen?style=for-the-badge)](https://gmat.glitchmind.io)
+
 > AI-Native GMAT Critical Reasoning Tutor — A GlitchMind Product
 
 **Live:** [gmat.glitchmind.io](https://gmat.glitchmind.io) &nbsp;|&nbsp; **API:** [api.glitchmind.io](https://api.glitchmind.io) &nbsp;|&nbsp; **API Docs:** [api.glitchmind.io/docs](https://api.glitchmind.io/docs)
+
+---
+
+## 🌐 Live Demo
+
+**👉 [https://gmat.glitchmind.io](https://gmat.glitchmind.io)**
 
 ---
 
