@@ -44,8 +44,12 @@ app = FastAPI(
 # CORS: 允许前端应用访问
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,  # credentials 不能与 allow_origins=["*"] 同时启用
+    allow_origins=[
+        "https://gmat.glitchmind.io",
+        "https://api.glitchmind.io",
+        "http://localhost:5173",
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
