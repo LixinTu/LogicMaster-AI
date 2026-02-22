@@ -173,11 +173,12 @@ class RAGService:
             return []
 
         try:
-            results = self._get_qdrant().search(
+            response = self._get_qdrant().query_points(
                 collection_name=settings.QDRANT_COLLECTION,
-                query_vector=vector,
+                query=vector,
                 limit=top_k,
             )
+            results = response.points
             return [
                 {
                     "question_id": hit.payload.get("question_id", ""),
